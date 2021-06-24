@@ -248,8 +248,9 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                                  do_augment=False,
                                  augmentation_name="aug_all",
                                  custom_augmentation=None,
-                                 other_inputs_paths=None, preprocessing=None,
-                                 read_image_type=cv2.IMREAD_COLOR , ignore_segs=False ):
+                                 other_inputs_paths=None, preprocessing=None, 
+                                 read_image_type=cv2.IMREAD_COLOR , 
+                                 ignore_segs=False):
     
 
     if not ignore_segs:

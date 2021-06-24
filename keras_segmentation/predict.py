@@ -14,9 +14,7 @@ from .data_utils.data_loader import get_image_array, get_segmentation_array,\
     DATA_LOADER_SEED, class_colors, get_pairs_from_paths
 from .models.config import IMAGE_ORDERING
 
-
 random.seed(DATA_LOADER_SEED)
-
 
 def model_from_checkpoint_path(checkpoints_path):
 
@@ -78,7 +76,7 @@ def overlay_seg_image(inp_img, seg_img):
     orininal_w = inp_img.shape[1]
     seg_img = cv2.resize(seg_img, (orininal_w, orininal_h), interpolation=cv2.INTER_NEAREST)
 
-    fused_img = (inp_img/2 + seg_img/2).astype('uint8')
+    fused_img = (0.7*inp_img + 0.3*seg_img).astype('uint8')
     return fused_img
 
 
@@ -199,9 +197,9 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
             out_fname = None
         else:
             if isinstance(inp, six.string_types):
-                out_fname = os.path.join(out_dir, os.path.basename(inp))
+                out_fname = os.path.join(out_dir, os.path.splitext(os.path.basename(inp))[0] + ".png")
             else:
-                out_fname = os.path.join(out_dir, str(i) + ".jpg")
+                out_fname = os.path.join(out_dir, str(i) + ".png")
 
         pr = predict(model, inp, out_fname,
                      overlay_img=overlay_img, class_names=class_names,
@@ -221,6 +219,7 @@ def set_video(inp, video_name):
     video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     size = (video_width, video_height)
     fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    #fourcc = cv2.VideoWriter_fourcc('a','v','c','1')
     video = cv2.VideoWriter(video_name, fourcc, fps, size)
     return cap, video, fps
 
@@ -239,7 +238,9 @@ def predict_video(model=None, inp=None, output=None,
         prev_time = time()
         ret, frame = cap.read()
         if frame is not None:
-            pr = predict(model=model, inp=frame)
+            gray_1C = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray_3C = cv2.cvtColor(gray_1C, cv2.COLOR_GRAY2BGR)
+            pr = predict(model=model, inp=gray_3C)
             fused_img = visualize_segmentation(
                 pr, frame, n_classes=n_classes,
                 colors=colors,
@@ -251,8 +252,9 @@ def predict_video(model=None, inp=None, output=None,
                 )
         else:
             break
-        print("FPS: {}".format(1/(time() - prev_time)))
+        #print("FPS: {}".format(1/(time() - prev_time)))
         if output is not None:
+            fused_img = np.uint8(fused_img)
             video.write(fused_img)
         if display:
             cv2.imshow('Frame masked', fused_img)
