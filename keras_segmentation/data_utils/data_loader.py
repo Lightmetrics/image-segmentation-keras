@@ -246,8 +246,11 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                                  n_classes, input_height, input_width,
                                  output_height, output_width,
                                  do_augment=False,
-                                 augmentation_name="aug_all",
+                                 augmentation_name = "aug_all",
                                  custom_augmentation=None,
+                                 do_contrastive=False,
+                                 contrastive_name="contrast",
+                                 custom_contrastives=["contrast"],
                                  other_inputs_paths=None, preprocessing=None, 
                                  read_image_type=cv2.IMREAD_COLOR , 
                                  ignore_segs=False):
@@ -266,12 +269,16 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
     while True:
         X = []
         Y = []
+        if do_contrastive:
+            n_contrastive = len(custom_contrastives)
+            assert batch_size % (n_contrastive+1) == 0 , "Choose a batch-size such that batch size is divisible by number of contrastive augs"
+            batch_size == batch_size // (n_contrastive+1)
+
         for _ in range(batch_size):
             if other_inputs_paths is None:
-
                 if ignore_segs:
                     im = next( img_list_gen )
-                    seg = None 
+                    seg = None
                 else:
                     im, seg = next(zipped)
                     seg = cv2.imread(seg, 1)
@@ -293,8 +300,17 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 if preprocessing is not None:
                     im = preprocessing(im)
 
-                X.append(get_image_array(im, input_width,
-                                         input_height, ordering=IMAGE_ORDERING))
+                X.append(get_image_array(im, input_width, input_height, ordering=IMAGE_ORDERING))
+                if not ignore_segs:
+                    Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
+                
+                if do_contrastive:
+                    for custom_contrastive in custom_contrastives:
+                        im_contrastive, seg_contrastive = im, seg
+                        im_contrastive, seg_contrastive[:,:,0] = custom_augment_seg(im, seg[:,:,0], custom_contrastive)
+                        X.append(get_image_array(im_contrastive, input_width, input_height, ordering=IMAGE_ORDERING))
+                        Y.append(get_segmentation_array(seg_contrastive, n_classes, output_width, output_height))
+
             else:
 
                 assert ignore_segs == False , "Not supported yet"
@@ -334,11 +350,17 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
 
                 X.append(oth)
 
-            if not ignore_segs:
-                Y.append(get_segmentation_array(
-                    seg, n_classes, output_width, output_height))
+                if not ignore_segs:
+                    Y.append(get_segmentation_array(
+                        seg, n_classes, output_width, output_height))
 
         if ignore_segs:
             yield np.array(X)
         else:
+            # check if contrastive images were sequenced properly
+            if do_contrastive:
+                for i in range(0, batch_size*(n_contrastive+1),n_contrastive+1):
+                    for j in range(1, n_contrastive+1):
+                        #assert (X[i] == X[i+j]).all(), f"Some problem with contrast augumentation images instance {i} and {i+j}" 
+                        assert (Y[i] == Y[i+j]).all(), f"Some problem with contrast augumentation segmen instance {i} and {i+j}" 
             yield np.array(X), np.array(Y)

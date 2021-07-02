@@ -194,7 +194,7 @@ def _load_augmentation(augmentation_name="aug_all"):
 
     if augmentation_name not in augmentation_functions:
         raise ValueError("Augmentation name not supported")
-
+    #print(augmentation_name)
     IMAGE_AUGMENTATION_SEQUENCE = augmentation_functions[augmentation_name]()
 
 

@@ -529,9 +529,9 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
             error += (egolanes_pts_gt["vy_mode"] - egolanes_pts_pr["vy_mode"])**2
         error = math.sqrt(error)
         errors.append(error)
-        print("\nEgolanes GT", egolanes_pts_gt)
-        print("Egolanes PR", egolanes_pts_pr)
-        print("-"*50)
+        #print("\nEgolanes GT", egolanes_pts_gt)
+        #print("Egolanes PR", egolanes_pts_pr)
+        #print("-"*50)
         
         if out_dir is not None:
             os.makedirs(out_dir, exist_ok=True)
@@ -542,11 +542,16 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
                                                colors=[(0, 0, 0), (0, 0, 255), (0, 0, 125)],
                                                show_legends=False, class_names=["B", "L", "R"])
             # code to annotate image with the ground truth
-            inp_img = cv2.circle(inp_img, (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), 2, (0, 255, 0), 2)
-            cv2.line(inp_img, (egolanes_pts_gt["vx_mode"], 0), (egolanes_pts_gt["vx_mode"], inp_h-1), (0, 255, 0)) 
-            cv2.line(inp_img, (0, egolanes_pts_gt["vy_mode"]), (inp_w-1, egolanes_pts_gt["vy_mode"]), (0, 255, 0))
-            cv2.line(inp_img, (egolanes_pts_gt["x1_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), (0, 255, 0), 2)
-            cv2.line(inp_img, (egolanes_pts_gt["x2_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), (0, 255, 0), 2)
+            if egolanes_pts_gt["vx_mode"] is not None and egolanes_pts_gt["vy_mode"] is not None:
+                inp_img = cv2.circle(inp_img, (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), 2, (0, 255, 0), 2)
+                cv2.line(inp_img, (egolanes_pts_gt["vx_mode"], 0), (egolanes_pts_gt["vx_mode"], inp_h-1), (0, 255, 0)) 
+                cv2.line(inp_img, (0, egolanes_pts_gt["vy_mode"]), (inp_w-1, egolanes_pts_gt["vy_mode"]), (0, 255, 0))
+                cv2.line(inp_img, (egolanes_pts_gt["x1_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), (0, 255, 0), 2)
+                cv2.line(inp_img, (egolanes_pts_gt["x2_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), (0, 255, 0), 2)
+            elif egolanes_pts_gt["x1_intercept_mode"] is not None:
+                cv2.line(inp_img, (egolanes_pts_gt["x1_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], 0), (0, 255, 0), 2)
+            elif egolanes_pts_gt["x2_intercept_mode"] is not None: 
+                cv2.line(inp_img, (egolanes_pts_gt["x2_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], 0), (0, 255, 0), 2)
             # code to annotate image with the predictions
             if egolanes_pts_pr["vx_mode"] is not None and egolanes_pts_pr["vy_mode"] is not None:
                 inp_img = cv2.circle(inp_img, (egolanes_pts_pr["vx_mode"], egolanes_pts_pr["vy_mode"]), 2, (0, 0, 255), 2)
@@ -559,6 +564,5 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
             elif egolanes_pts_pr["x2_intercept_mode"] is not None: 
                 cv2.line(inp_img, (egolanes_pts_pr["x2_intercept_mode"], inp_h-1), (egolanes_pts_pr["vx_mode"], 0), (0, 0, 255), 2)
             out_img = np.concatenate([fused_img, inp_img], axis=1)
-            cv2.imwrite(out_path, out_img)
- 
-    return None
+            cv2.imwrite(out_path, out_img) 
+    return np.mean(errors)
