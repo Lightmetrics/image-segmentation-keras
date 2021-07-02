@@ -136,7 +136,7 @@ def custom_lss_loss(output_h, output_w):
     loss.__name__ = 'custom_lls_loss'
     return loss
 
-def joint_loss(output_h, output_w, shape_loss_weight = 0.3):
+def combine_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
     def loss(gt, pr):
         part_crossentropy = 1 - shape_loss_weight
         part_custom = shape_loss_weight
@@ -193,7 +193,7 @@ def train(model,
           other_inputs_paths = None,
           preprocessing=None,
           class_weights = None,
-          use_shape_loss = False,
+          do_shape = False,
           shape_loss_weight = 0.3,
           read_image_type=1  # cv2.IMREAD_COLOR = 1 (rgb),
                              # cv2.IMREAD_GRAYSCALE = 0,
@@ -223,12 +223,11 @@ def train(model,
     if optimizer_name is not None:
 
         #if ignore_zero_class:
-        
         if class_weights:
             model.compile(loss=weighted_categorical_crossentropy(class_weights), 
                     optimizer=optimizer_name, metrics=['accuracy'])
-        elif use_shape_loss:
-           model.compile(loss=joint_loss(output_height, output_width, shape_loss_weight),
+        elif do_shape:
+           model.compile(loss=combine_shape_loss(output_height, output_width, shape_loss_weight),
                     optimizer=optimizer_name, metrics=['accuracy', "categorical_crossentropy", custom_lss_loss(output_height, output_width)])  
         else:
             loss = 'categorical_crossentropy'
