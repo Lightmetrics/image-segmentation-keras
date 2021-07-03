@@ -136,7 +136,7 @@ def custom_lss_loss(output_h, output_w):
     loss.__name__ = 'custom_lls_loss'
     return loss
 
-def combine_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
+def joint_ce_cont_loss(output_h, output_w, shape_loss_weight = 0.3):
     def loss(gt, pr):
         part_crossentropy = 1 - shape_loss_weight
         part_custom = shape_loss_weight
@@ -148,7 +148,37 @@ def combine_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
             return part_crossentropy*loss_categorical_crossentropy + part_custom*loss_lls
         else:
             return loss_categorical_crossentropy
-    loss.__name__ = 'joint_loss'
+    loss.__name__ = 'joint_ce_shape_loss'
+    return loss
+
+def custom_contrastive_loss(batch_size, n_contrastive):
+    n_instances_per_img = n_contrastive + 1
+    def loss(gt, pr):
+        error = 0
+        for i in range(0, batch_size, n_instances_per_img):
+            for a in range(n_instances_per_img):
+                for b in range(a, n_instances_per_img):
+                    img_a = tf.argmax(pr[i+a], 1)
+                    img_b = tf.argmax(pr[i+b], 1)
+                error += tf.math.reduce_sum(tf.cast(img_a == img_b, tf.float32))
+        return tf.math.sqrt(error/batch_size)
+    loss.__name__ = "custom_contrastive_loss"
+    return loss
+
+
+def joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight=0.3):
+    def loss(gt, pr):
+        part_crossentropy = 1 - contrastive_loss_weight
+        part_custom = contrastive_loss_weight
+        # crossentropy
+        loss_categorical_crossentropy = tf.keras.losses.categorical_crossentropy(gt, pr)
+        # custom_loss
+        loss_contrastive = custom_contrastive_loss(batch_size, n_contrastive)(gt, pr)
+        if loss_contrastive > 0:
+            return part_crossentropy*loss_categorical_crossentropy + part_custom*loss_contrastive
+        else:
+            return loss_categorical_crossentropy
+    loss.__name__ = 'joint_ce_cont_loss'
     return loss
 
 
@@ -188,8 +218,8 @@ def train(model,
           callbacks=None,
           custom_augmentation=None,
           do_contrastive=False,
-          contrastive_name = "contrast",
           custom_contrastives = None,
+          contrastive_loss_weight = 0.3,
           other_inputs_paths = None,
           preprocessing=None,
           class_weights = None,
@@ -227,8 +257,16 @@ def train(model,
             model.compile(loss=weighted_categorical_crossentropy(class_weights), 
                     optimizer=optimizer_name, metrics=['accuracy'])
         elif do_shape:
-           model.compile(loss=combine_shape_loss(output_height, output_width, shape_loss_weight),
-                    optimizer=optimizer_name, metrics=['accuracy', "categorical_crossentropy", custom_lss_loss(output_height, output_width)])  
+            model.compile(loss = joint_ce_shape_loss(output_height, output_width, shape_loss_weight),
+                    optimizer=optimizer_name, 
+                    metrics=['accuracy', "categorical_crossentropy", 
+                    custom_lss_loss(output_height, output_width)])
+        elif do_contrastive:
+            n_contrastive = len(custom_contrastives)
+            model.compile(loss=joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight),
+                    optimizer=optimizer_name, 
+                    metrics=['accuracy', "categorical_crossentropy", 
+                    custom_contrastive_loss(batch_size, n_contrastive)])
         else:
             loss = 'categorical_crossentropy'
             model.compile(loss=loss, optimizer=optimizer_name,metrics=['accuracy'])
@@ -283,7 +321,7 @@ def train(model,
         do_augment=do_augment, augmentation_name=augmentation_name,
         custom_augmentation = custom_augmentation, 
         do_contrastive = do_contrastive, 
-        contrastive_name = contrastive_name,
+        #contrastive_name = contrastive_name,
         custom_contrastives = custom_contrastives,
         other_inputs_paths=other_inputs_paths, 
         preprocessing=preprocessing, read_image_type=read_image_type)
