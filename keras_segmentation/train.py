@@ -160,7 +160,7 @@ def custom_contrastive_loss(batch_size, n_contrastive):
                 for b in range(a, n_instances_per_img):
                     img_a = tf.argmax(pr[i+a], 1)
                     img_b = tf.argmax(pr[i+b], 1)
-                error += tf.math.reduce_sum(tf.cast(img_a == img_b, tf.float32))
+                error += tf.math.reduce_sum(tf.cast(img_a != img_b, tf.float32))/pr.shape[1]
         return tf.math.sqrt(error/batch_size)
     loss.__name__ = "custom_contrastive_loss"
     return loss
@@ -321,7 +321,6 @@ def train(model,
         do_augment=do_augment, augmentation_name=augmentation_name,
         custom_augmentation = custom_augmentation, 
         do_contrastive = do_contrastive, 
-        #contrastive_name = contrastive_name,
         custom_contrastives = custom_contrastives,
         other_inputs_paths=other_inputs_paths, 
         preprocessing=preprocessing, read_image_type=read_image_type)
@@ -332,8 +331,9 @@ def train(model,
                 n_classes, input_height, input_width, output_height, output_width,
                 other_inputs_paths=other_inputs_paths,
                 preprocessing=preprocessing, read_image_type=read_image_type)
+    
 
-    if callbacks is None and (not checkpoints_path is  None):
+    if (not checkpoints_path is None):
         default_callback = ModelCheckpoint(
                 filepath=checkpoints_path + ".{epoch:05d}",
                 save_weights_only=True,
@@ -341,8 +341,14 @@ def train(model,
             )
         if sys.version_info[0] < 3: # for pyhton 2 
             default_callback = CheckpointsCallback(checkpoints_path)
-
-    callbacks = [default_callback]
+        if callbacks is None:
+            callbacks = [default_callback]
+        else:
+            callbacks.append(default_callback)
+    
+    if callbacks is None:
+        callbacks = []
+    
     if not validate:
         history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
                   epochs=epochs, callbacks=callbacks, initial_epoch=initial_epoch)
