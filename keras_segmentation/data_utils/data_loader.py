@@ -22,6 +22,12 @@ except ImportError:
 from ..models.config import IMAGE_ORDERING
 from .augmentation import augment_seg, custom_augment_seg
 
+#EXPERIMENTAL:
+import tensorflow as tf
+from datetime import datetime 
+logdir = "logs/contrastive_viz/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+file_writer_contrastive = tf.summary.create_file_writer(logdir)
+
 DATA_LOADER_SEED = 0
 
 random.seed(DATA_LOADER_SEED)
@@ -250,7 +256,7 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                                  custom_augmentation=None,
                                  do_contrastive=False,
                                  contrastive_name="contrast",
-                                 custom_contrastives=["contrast"],
+                                 custom_contrastives=[],
                                  other_inputs_paths=None, preprocessing=None, 
                                  read_image_type=cv2.IMREAD_COLOR , 
                                  ignore_segs=False):
@@ -265,16 +271,17 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
         random.shuffle( img_list )
         img_list_gen = itertools.cycle( img_list )
 
-
+    iter_num = 0
     while True:
         X = []
         Y = []
+        n_contrastive = len(custom_contrastives)
         if do_contrastive:
-            n_contrastive = len(custom_contrastives)
             assert batch_size % (n_contrastive+1) == 0 , "Choose a batch-size such that batch size is divisible by number of contrastive augs"
             batch_size == batch_size // (n_contrastive+1)
-
-        for _ in range(batch_size):
+        
+        iter_num += 1
+        for _ in range(batch_size): 
             if other_inputs_paths is None:
                 if ignore_segs:
                     im = next( img_list_gen )
@@ -300,17 +307,16 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 if preprocessing is not None:
                     im = preprocessing(im)
 
-                X.append(get_image_array(im, input_width, input_height, ordering=IMAGE_ORDERING))
+                X.append(get_image_array(im, input_width, input_height, imgNorm="divide", ordering=IMAGE_ORDERING))
+
                 if not ignore_segs:
                     Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
                 
                 if do_contrastive:
                     for custom_contrastive in custom_contrastives:
-                        im_contrastive, seg_contrastive = im, seg
-                        im_contrastive, seg_contrastive[:,:,0] = custom_augment_seg(im, seg[:,:,0], custom_contrastive)
-                        X.append(get_image_array(im_contrastive, input_width, input_height, ordering=IMAGE_ORDERING))
-                        Y.append(get_segmentation_array(seg_contrastive, n_classes, output_width, output_height))
-
+                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0], augmentation_name = custom_contrastive)
+                        X.append(get_image_array(im_contrastive, input_width, input_height, imgNorm="divide", ordering=IMAGE_ORDERING))
+                        Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
             else:
 
                 assert ignore_segs == False , "Not supported yet"
@@ -360,7 +366,8 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
             # check if contrastive images were sequenced properly
             if do_contrastive:
                 for i in range(0, batch_size*(n_contrastive+1),n_contrastive+1):
-                    for j in range(1, n_contrastive+1):
-                        #assert (X[i] == X[i+j]).all(), f"Some problem with contrast augumentation images instance {i} and {i+j}" 
-                        assert (Y[i] == Y[i+j]).all(), f"Some problem with contrast augumentation segmen instance {i} and {i+j}" 
+                    for j in range(i+1, n_contrastive+1):
+                        assert (Y[i] == Y[i+j]).all(), f"Some problem with contrast augumentation segmen instance {i} and {i+j}"
+            with file_writer_contrastive.as_default():
+                tf.summary.image("Contrastive batch", np.array(X), step=iter_num, max_outputs=batch_size*(n_contrastive+1))
             yield np.array(X), np.array(Y)

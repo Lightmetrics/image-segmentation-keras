@@ -179,22 +179,32 @@ def _load_augmentation_aug_all():
         random_order=True
     )
 
+def _load_augmentation_aug_low_contrast():
+        return iaa.Sequential([iaa.LinearContrast((0.50, 0.75))])
+
+def _load_augmentation_aug_high_contrast():
+        return iaa.Sequential([iaa.LinearContrast((1.25, 1.60))])
+
+def _load_augmentation_aug_bilateral():
+        return iaa.Sequential([iaa.BilateralBlur(d=(15, 25), sigma_color=(30, 70), sigma_space=(30, 70))])
 
 augmentation_functions = {
     "aug_all": _load_augmentation_aug_all,
     "aug_all2": _load_augmentation_aug_all2,
     "aug_geometric": _load_augmentation_aug_geometric,
-    "aug_non_geometric": _load_augmentation_aug_non_geometric
+    "aug_non_geometric": _load_augmentation_aug_non_geometric,
+    "aug_contrast_low":  _load_augmentation_aug_low_contrast,
+    "aug_contrast_high":  _load_augmentation_aug_high_contrast,
+    "aug_bilateral":  _load_augmentation_aug_bilateral
 }
 
 
 def _load_augmentation(augmentation_name="aug_all"):
-
     global IMAGE_AUGMENTATION_SEQUENCE
 
     if augmentation_name not in augmentation_functions:
+        
         raise ValueError("Augmentation name not supported")
-    #print(augmentation_name)
     IMAGE_AUGMENTATION_SEQUENCE = augmentation_functions[augmentation_name]()
 
 

@@ -409,8 +409,11 @@ def _get_egolanes_points(mask):
                 r_slope, r_intercept = np.polyfit((x1_r, x2_r), (y1_r, y2_r), 1)
         vx = int((r_intercept - l_intercept) / (l_slope - r_slope))
         vy = int(l_slope*((r_intercept - l_intercept)/ (l_slope - r_slope)) + l_intercept)
-        x1_intercept = int((h-1 - l_intercept)/l_slope)
-        x2_intercept = int((h-1 - r_intercept)/r_slope)
+        try:
+            x1_intercept = int((h-1 - l_intercept)/(l_slope+1e6))
+            x2_intercept = int((h-1 - r_intercept)/(r_slope+1e6))
+        except:
+            print(l_slope, r_slope)
         # append valid intercepts to the list
         if x1_intercept > -3*w and x2_intercept > -3*w and x1_intercept < 3*w and x2_intercept < 3*w:
             list_vx.append(vx)
@@ -535,7 +538,8 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
         
         if out_dir is not None:
             os.makedirs(out_dir, exist_ok=True)
-            out_path = os.path.join(out_dir, f"e-{int(error):05}_{os.path.basename(inp)}")
+            out_path_error = os.path.join(out_dir, f"e-{int(error):05}_{os.path.basename(inp)}")
+            out_path = os.path.join(out_dir, f"{os.path.basename(inp)}")
             
 	    #segmentation output overlayed on input image
             fused_img = visualize_segmentation(pr, inp_img, n_classes=model.n_classes, overlay_img=True, 
@@ -565,4 +569,5 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
                 cv2.line(inp_img, (egolanes_pts_pr["x2_intercept_mode"], inp_h-1), (egolanes_pts_pr["vx_mode"], 0), (0, 0, 255), 2)
             out_img = np.concatenate([fused_img, inp_img], axis=1)
             cv2.imwrite(out_path, out_img) 
+            cv2.imwrite(out_path_error, out_img) 
     return np.mean(errors)

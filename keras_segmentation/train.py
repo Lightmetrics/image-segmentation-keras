@@ -136,7 +136,7 @@ def custom_lss_loss(output_h, output_w):
     loss.__name__ = 'custom_lls_loss'
     return loss
 
-def joint_ce_cont_loss(output_h, output_w, shape_loss_weight = 0.3):
+def joint_ce_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
     def loss(gt, pr):
         part_crossentropy = 1 - shape_loss_weight
         part_custom = shape_loss_weight
@@ -155,14 +155,16 @@ def custom_contrastive_loss(batch_size, n_contrastive):
     n_instances_per_img = n_contrastive + 1
     def loss(gt, pr):
         error = 0
+        n = 0
         for i in range(0, batch_size, n_instances_per_img):
             for a in range(n_instances_per_img):
-                for b in range(a, n_instances_per_img):
+                for b in range(a+1, n_instances_per_img):
                     img_a = tf.argmax(pr[i+a], 1)
                     img_b = tf.argmax(pr[i+b], 1)
                 error += tf.math.reduce_sum(tf.cast(img_a != img_b, tf.float32))/pr.shape[1]
-        return tf.math.sqrt(error/batch_size)
-    loss.__name__ = "custom_contrastive_loss"
+                n += 1
+        return tf.math.sqrt(error/n)
+    loss.__name__ = "cont_loss"
     return loss
 
 
@@ -265,8 +267,8 @@ def train(model,
             n_contrastive = len(custom_contrastives)
             model.compile(loss=joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight),
                     optimizer=optimizer_name, 
-                    metrics=['accuracy', "categorical_crossentropy", 
-                    custom_contrastive_loss(batch_size, n_contrastive)])
+                    metrics=[ 'categorical_crossentropy', 
+                    custom_contrastive_loss(batch_size, n_contrastive), 'acc'])
         else:
             loss = 'categorical_crossentropy'
             model.compile(loss=loss, optimizer=optimizer_name,metrics=['accuracy'])
@@ -320,7 +322,7 @@ def train(model,
         input_height, input_width, output_height, output_width,
         do_augment=do_augment, augmentation_name=augmentation_name,
         custom_augmentation = custom_augmentation, 
-        do_contrastive = do_contrastive, 
+        do_contrastive = do_contrastive,
         custom_contrastives = custom_contrastives,
         other_inputs_paths=other_inputs_paths, 
         preprocessing=preprocessing, read_image_type=read_image_type)
@@ -333,21 +335,17 @@ def train(model,
                 preprocessing=preprocessing, read_image_type=read_image_type)
     
 
-    if (not checkpoints_path is None):
+    if callbacks is None and (not checkpoints_path is None):
         default_callback = ModelCheckpoint(
                 filepath=checkpoints_path + ".{epoch:05d}",
                 save_weights_only=True,
                 verbose=True
             )
-        if sys.version_info[0] < 3: # for pyhton 2 
+        if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-        if callbacks is None:
-            callbacks = [default_callback]
-        else:
-            callbacks.append(default_callback)
+
     
-    if callbacks is None:
-        callbacks = []
+    callbacks = [default_callback]
     
     if not validate:
         history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
