@@ -1,14 +1,18 @@
 import json
 import os
+import glob
+import sys
+import numpy as np
 
-from .data_utils.data_loader import image_segmentation_generator, \
-    verify_segmentation_dataset
 import six
 from keras.callbacks import Callback
 from tensorflow.keras.callbacks import ModelCheckpoint
 import tensorflow as tf
-import glob
-import sys
+import tensorflow.keras as keras
+import keras_tuner as kt
+
+from .data_utils.data_loader import image_segmentation_generator, \
+    verify_segmentation_dataset
 
 def find_latest_checkpoint(checkpoints_path, fail_safe=True):
 
@@ -39,23 +43,27 @@ def find_latest_checkpoint(checkpoints_path, fail_safe=True):
 
     return latest_epoch_checkpoint
 
+
 def masked_categorical_crossentropy(gt, pr):
     from keras.losses import categorical_crossentropy
-    mask = 1 - gt[:, :, 0] 
+    mask = 1 - gt[:, :, 0]
     return categorical_crossentropy(gt, pr) * mask
+
 
 def weighted_categorical_crossentropy(class_weights):
     from keras.losses import categorical_crossentropy
     class_weights = list(class_weights.values())
-    
+
     def loss(gt, pr):
-        _, n_output_pixels, n_class= pr.shape
-        
+        _, n_output_pixels, n_class = pr.shape
+
         weights_tensor = tf.repeat(class_weights, n_output_pixels)
-        weights_tensor = tf.reshape(weights_tensor, (-1, n_output_pixels, n_class))
+        weights_tensor = tf.reshape(
+            weights_tensor, (-1, n_output_pixels, n_class))
         weights = tf.reduce_sum(gt * weights_tensor, axis=-1)
 
-        cce = tf.keras.losses.CategoricalCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
+        cce = tf.keras.losses.CategoricalCrossentropy(
+            reduction=tf.keras.losses.Reduction.NONE)
         loss = cce(gt, pr)
         weighted_loss = loss * weights
         print(weighted_loss.shape)
@@ -65,11 +73,12 @@ def weighted_categorical_crossentropy(class_weights):
 
 def helper_calc_lls(softmax_mask):
     mask = tf.one_hot(tf.argmax(softmax_mask, 2), 3)
-    l_coord = tf.where(mask[:,:,1] == 1)
-    r_coord = tf.where(mask[:,:,2] == 1)
+    l_coord = tf.where(mask[:, :, 1] == 1)
+    r_coord = tf.where(mask[:, :, 2] == 1)
 
     # get all coords of image - will be used later
-    coord_map = tf.dtypes.cast(tf.where(mask[:,:,-1] == mask[:,:,-1]), tf.float32)
+    coord_map = tf.dtypes.cast(
+        tf.where(mask[:, :, -1] == mask[:, :, -1]), tf.float32)
     mask_flat = tf.reshape(mask, (-1, 3))
 
     try:
@@ -85,7 +94,7 @@ def helper_calc_lls(softmax_mask):
             else:
                 l_params = tf.constant([[0], [0]], dtype=tf.float32)
         except Exception as e:
-            tf.print("Error in l_lls calc",e,l_Y, l_X)
+            tf.print("Error in l_lls calc", e, l_Y, l_X)
             l_params = tf.constant([[0], [0]], dtype=tf.float32)
         #tf.print("lparams", l_params)
 
@@ -99,23 +108,26 @@ def helper_calc_lls(softmax_mask):
             if len(r_y) > 10:
                 r_params = tf.linalg.lstsq(r_Y, r_X, fast=False)
             else:
-                r_params = tf.constant([[0],[0]], dtype=tf.float32)
+                r_params = tf.constant([[0], [0]], dtype=tf.float32)
         except Exception as e:
-            tf.print("Error in r_lls calc",r_Y, r_X, e)
-            r_params = tf.constant([[0],[0]], dtype=tf.float32)
+            tf.print("Error in r_lls calc", r_Y, r_X, e)
+            r_params = tf.constant([[0], [0]], dtype=tf.float32)
         #tf.print("rparams", r_params)
-        
+
         params = tf.concat([l_params, r_params], axis=0)
         #tf.print("params", params)
-        
+
         # compute l and r lane masks
-        l_error = (coord_map[:,1] - (coord_map[:,0]*l_params[0] + l_params[1]))**2
-        l_error_mask = l_error * mask_flat[:,1]
-        r_error = (coord_map[:,1] - (coord_map[:,0]*r_params[0] + r_params[1]))**2
-        r_error_mask = r_error * mask_flat[:,2]
-        
+        l_error = (coord_map[:, 1] - (coord_map[:, 0]
+                   * l_params[0] + l_params[1]))**2
+        l_error_mask = l_error * mask_flat[:, 1]
+        r_error = (coord_map[:, 1] - (coord_map[:, 0]
+                   * r_params[0] + r_params[1]))**2
+        r_error_mask = r_error * mask_flat[:, 2]
+
         # stack background error mask, left lane error mask, right lane error mask
-        error_mask = tf.stack([tf.zeros(mask_flat[:,0].shape), l_error_mask, r_error_mask], axis=1)
+        error_mask = tf.stack(
+            [tf.zeros(mask_flat[:, 0].shape), l_error_mask, r_error_mask], axis=1)
         #tf.print("Error mask mean", tf.reduce_mean(tf.reduce_mean(error_mask, 0), 0))
         return error_mask
     except Exception as e:
@@ -125,23 +137,26 @@ def helper_calc_lls(softmax_mask):
 
 def custom_lss_loss(output_h, output_w):
     def loss(gt, pr):
-        batch_size, n_output_pixels, n_class= pr.shape
-        assert n_output_pixels == output_h * output_w    
+        batch_size, n_output_pixels, n_class = pr.shape
+        assert n_output_pixels == output_h * output_w
         # reshape the flat pr to pr mask of image shape
         pr_mask = tf.reshape(pr, (-1, output_h, output_w, n_class))
         # calculate the error masks
-        error_mask = tf.map_fn(fn=helper_calc_lls, elems = pr_mask, fn_output_signature=tf.float32)
+        error_mask = tf.map_fn(
+            fn=helper_calc_lls, elems=pr_mask, fn_output_signature=tf.float32)
         #tf.print(" Shape of error mask", error_mask.shape)
         return tf.reduce_mean(error_mask)
     loss.__name__ = 'custom_lls_loss'
     return loss
 
-def joint_ce_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
+
+def joint_ce_shape_loss(output_h, output_w, shape_loss_weight=0.3):
     def loss(gt, pr):
         part_crossentropy = 1 - shape_loss_weight
         part_custom = shape_loss_weight
         # crossentropy
-        loss_categorical_crossentropy = tf.keras.losses.categorical_crossentropy(gt, pr)
+        loss_categorical_crossentropy = tf.keras.losses.categorical_crossentropy(
+            gt, pr)
         # custom_loss
         loss_lls = custom_lss_loss(output_h, output_w)(gt, pr)
         if loss_lls > 0:
@@ -151,8 +166,10 @@ def joint_ce_shape_loss(output_h, output_w, shape_loss_weight = 0.3):
     loss.__name__ = 'joint_ce_shape_loss'
     return loss
 
+
 def custom_contrastive_loss(batch_size, n_contrastive):
     n_instances_per_img = n_contrastive + 1
+
     def loss(gt, pr):
         error = 0
         n = 0
@@ -161,7 +178,8 @@ def custom_contrastive_loss(batch_size, n_contrastive):
                 for b in range(a+1, n_instances_per_img):
                     img_a = tf.argmax(pr[i+a], 1)
                     img_b = tf.argmax(pr[i+b], 1)
-                error += tf.math.reduce_sum(tf.cast(img_a != img_b, tf.float32))/pr.shape[1]
+                error += tf.math.reduce_sum(tf.cast(img_a !=
+                                            img_b, tf.float32))/pr.shape[1]
                 n += 1
         return tf.math.sqrt(error/n)
     loss.__name__ = "cont_loss"
@@ -175,13 +193,27 @@ def joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight=0.3):
         # crossentropy
         loss_categorical_crossentropy = tf.keras.losses.categorical_crossentropy(gt, pr)
         # custom_loss
-        loss_contrastive = custom_contrastive_loss(batch_size, n_contrastive)(gt, pr)
+        loss_contrastive = custom_contrastive_loss(
+            batch_size, n_contrastive)(gt, pr)
         if loss_contrastive > 0:
             return part_crossentropy*loss_categorical_crossentropy + part_custom*loss_contrastive
         else:
             return loss_categorical_crossentropy
     loss.__name__ = 'joint_ce_cont_loss'
     return loss
+
+# def iou(n_classes):
+#     EPS = 1e-12
+#     def loss(gt, pr):
+#         class_wise = np.zeros(n_classes)
+#         for cl in range(n_classes):
+#             intersection = np.sum((gt == cl)*(pr == cl))
+#             union = np.sum(np.maximum((gt == cl), (pr == cl)))
+#             iou = float(intersection)/(union + EPS)
+#             class_wise[cl] = iou
+#         return class_wise
+#     loss.__name__ = "classwise_iou"
+#     return loss
 
 
 class CheckpointsCallback(Callback):
@@ -220,17 +252,18 @@ def train(model,
           callbacks=None,
           custom_augmentation=None,
           do_contrastive=False,
-          custom_contrastives = None,
-          contrastive_loss_weight = 0.3,
-          other_inputs_paths = None,
+          custom_contrastives=None,
+          contrastive_loss_weight=0.3,
+          imgNorm = "divide",
+          other_inputs_paths=None,
           preprocessing=None,
-          class_weights = None,
-          do_shape = False,
-          shape_loss_weight = 0.3,
+          class_weights=None,
+          do_shape=False,
+          shape_loss_weight=0.3,
           read_image_type=1  # cv2.IMREAD_COLOR = 1 (rgb),
                              # cv2.IMREAD_GRAYSCALE = 0,
                              # cv2.IMREAD_UNCHANGED = -1 (4 channels like RGBA)
-         ):
+          ):
     from .models.all_models import model_from_name
     # check if user gives model name instead of the model object
     if isinstance(model, six.string_types):
@@ -253,31 +286,32 @@ def train(model,
         assert val_annotations is not None
 
     if optimizer_name is not None:
-
-        #if ignore_zero_class:
         if class_weights:
             model.compile(loss=weighted_categorical_crossentropy(class_weights), 
-                    optimizer=optimizer_name, metrics=['accuracy'])
+                            optimizer=optimizer_name, 
+                            metrics=['acc'])
         elif do_shape:
-            model.compile(loss = joint_ce_shape_loss(output_height, output_width, shape_loss_weight),
-                    optimizer=optimizer_name, 
-                    metrics=['accuracy', "categorical_crossentropy", 
-                    custom_lss_loss(output_height, output_width)])
+            model.compile(loss=joint_ce_shape_loss(output_height, output_width, shape_loss_weight),
+                            optimizer=optimizer_name,
+                            metrics=['acc',
+                                'categorical_crossentropy',
+                                custom_lss_loss(output_height, output_width)])
         elif do_contrastive:
             n_contrastive = len(custom_contrastives)
             model.compile(loss=joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight),
-                    optimizer=optimizer_name, 
-                    metrics=[ 'categorical_crossentropy', 
-                    custom_contrastive_loss(batch_size, n_contrastive), 'acc'])
+                            optimizer=optimizer_name,
+                            metrics=['acc','categorical_crossentropy', 
+                            custom_contrastive_loss(batch_size, n_contrastive)])
         else:
-            loss = 'categorical_crossentropy'
-            model.compile(loss=loss, optimizer=optimizer_name,metrics=['accuracy'])
+            model.compile(loss='categorical_crossentropy', 
+                            optimizer=optimizer_name, 
+                            metrics=['acc'])
 
     if checkpoints_path is not None:
         config_file = checkpoints_path + "_config.json"
         dir_name = os.path.dirname(config_file)
 
-        if ( not os.path.exists(dir_name) )  and len( dir_name ) > 0 :
+        if (not os.path.exists(dir_name)) and len(dir_name) > 0:
             os.makedirs(dir_name)
 
         with open(config_file, "w") as f:
@@ -321,41 +355,104 @@ def train(model,
         train_images, train_annotations,  batch_size,  n_classes,
         input_height, input_width, output_height, output_width,
         do_augment=do_augment, augmentation_name=augmentation_name,
-        custom_augmentation = custom_augmentation, 
-        do_contrastive = do_contrastive,
-        custom_contrastives = custom_contrastives,
-        other_inputs_paths=other_inputs_paths, 
+        custom_augmentation=custom_augmentation,
+        do_contrastive=do_contrastive,
+        custom_contrastives=custom_contrastives,
+        imgNorm = imgNorm,
+        other_inputs_paths=other_inputs_paths,
         preprocessing=preprocessing, read_image_type=read_image_type)
-    
+
     if validate:
         val_gen = image_segmentation_generator(
-                val_images, val_annotations,  val_batch_size,
-                n_classes, input_height, input_width, output_height, output_width,
-                other_inputs_paths=other_inputs_paths,
-                preprocessing=preprocessing, read_image_type=read_image_type)
-    
+            val_images, val_annotations,  val_batch_size,
+            n_classes, input_height, input_width, output_height, output_width,
+            imgNorm = imgNorm,
+            other_inputs_paths=other_inputs_paths,
+            preprocessing=preprocessing, read_image_type=read_image_type)
 
     if callbacks is None and (not checkpoints_path is None):
         default_callback = ModelCheckpoint(
-                filepath=checkpoints_path + ".{epoch:05d}",
-                save_weights_only=True,
-                verbose=True
-            )
+            filepath=checkpoints_path + ".{epoch:05d}",
+            save_weights_only=True,
+            verbose=True
+        )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-
-    
     callbacks = [default_callback]
-    
+
     if not validate:
         history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
-                  epochs=epochs, callbacks=callbacks, initial_epoch=initial_epoch)
+                            epochs=epochs, callbacks=callbacks, initial_epoch=initial_epoch)
     else:
         history = model.fit(train_gen,
-                  steps_per_epoch=steps_per_epoch,
-                  validation_data=val_gen,
-                  validation_steps=val_steps_per_epoch,
-                  epochs=epochs, callbacks=callbacks,
-                  use_multiprocessing=gen_use_multiprocessing, 
-                  initial_epoch=initial_epoch)
+                            steps_per_epoch=steps_per_epoch,
+                            validation_data=val_gen,
+                            validation_steps=val_steps_per_epoch,
+                            epochs=epochs, callbacks=callbacks,
+                            use_multiprocessing=gen_use_multiprocessing,
+                            initial_epoch=initial_epoch)
     return history
+
+
+# def get_hp_model(model, loss, metrics):
+#     def builder(hp):
+#         hp_learning_rate = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+#         model.compile(optimize=keras.optimizers.Adam(learning_rate=hp_learning_rate),
+#                 loss='categorical_crossentropy',
+#                 metrics=['categorical_crossentropy', 'accuracy'])
+#         return model
+#     return builder
+
+# def tune_lr(model,
+#             train_images=None,
+#             train_annotations=None,
+#             val_images = None,
+#             val_annotations = None,
+#             batch_size=32,
+#             steps_per_epoch=512,
+#             val_steps_per_epoch=512,
+#             epochs = 50,
+#             callbacks=None):
+        
+#     n_classes = model.n_classes
+#     input_height = model.input_height
+#     input_width = model.input_width
+#     output_height = model.output_height
+#     output_width = model.output_width
+
+#     model_builder_fn = get_hp_model(model, loss, metrics)
+
+#     tuner = kt.Hyperband(model_builder_fn,
+#                      objective='val_accuracy',
+#                      max_epochs=10,
+#                      factor=3,
+#                      directory='tune_dir',
+#                      project_name='intro_to_kt')
+
+#     stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
+
+#     train_gen = image_segmentation_generator(
+#         train_images, train_annotations,  batch_size,  n_classes,
+#         input_height, input_width, output_height, output_width)
+
+#     val_gen = image_segmentation_generator(
+#         val_images, val_annotations,  batch_size,
+#         n_classes, input_height, input_width, output_height, output_width)
+
+#     tuner.search(train_gen,
+#         steps_per_epoch = steps_per_epoch,
+#         validation_data = val_gen,
+#         validation_steps = val_steps_per_epoch,
+#         epochs = epochs, 
+#         callbacks=[stop_early])
+
+#     best_hps=tuner.get_best_hyperparameters(num_trials=1)[0]
+
+#     print(f"""
+#     The hyperparameter search is complete. The optimal learning rate for the optimizer
+#     is {best_hps.get('learning_rate')}.
+#     """)
+
+#     return best_hps.get('learning_rate')
+
+

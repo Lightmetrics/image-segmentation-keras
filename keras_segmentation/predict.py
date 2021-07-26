@@ -136,7 +136,7 @@ def predict(model=None, inp=None, out_fname=None,
             checkpoints_path=None, overlay_img=False,
             class_names=None, show_legends=False, colors=class_colors,
             prediction_width=None, prediction_height=None,
-            read_image_type=1):
+            read_image_type=1, imgNorm="divide"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -156,7 +156,7 @@ def predict(model=None, inp=None, out_fname=None,
     input_height = model.input_height
     n_classes = model.n_classes
 
-    x = get_image_array(inp, input_width, input_height,
+    x = get_image_array(inp, input_width, input_height,imgNorm=imgNorm,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
     pr = pr.reshape((output_height,  output_width, n_classes)).argmax(axis=2)
@@ -177,7 +177,7 @@ def predict(model=None, inp=None, out_fname=None,
 def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      checkpoints_path=None, overlay_img=False,
                      class_names=None, show_legends=False, colors=class_colors,
-                     prediction_width=None, prediction_height=None, read_image_type=1):
+                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="divide"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -210,7 +210,7 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      overlay_img=overlay_img, class_names=class_names,
                      show_legends=show_legends, colors=colors,
                      prediction_width=prediction_width,
-                     prediction_height=prediction_height, read_image_type=read_image_type)
+                     prediction_height=prediction_height, read_image_type=read_image_type, imgNorm=imgNorm)
 
         all_prs.append(pr)
 
@@ -232,7 +232,7 @@ def set_video(inp, video_name):
 def predict_video(model=None, inp=None, output=None,
                   checkpoints_path=None, display=False, overlay_img=True,
                   class_names=None, show_legends=False, colors=class_colors,
-                  prediction_width=None, prediction_height=None):
+                  prediction_width=None, prediction_height=None, imgNorm="divide"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -253,7 +253,8 @@ def predict_video(model=None, inp=None, output=None,
                 show_legends=show_legends,
                 class_names=class_names,
                 prediction_width=prediction_width,
-                prediction_height=prediction_height
+                prediction_height=prediction_height,
+                imgNorm=imgNorm
                 )
         else:
             break
@@ -272,7 +273,7 @@ def predict_video(model=None, inp=None, output=None,
 
 
 def evaluate(model=None, inp_images=None, annotations=None,
-             inp_images_dir=None, annotations_dir=None, checkpoints_path=None, read_image_type=1):
+             inp_images_dir=None, annotations_dir=None, checkpoints_path=None, read_image_type=1, imgNorm="divide"):
 
     if model is None:
         assert (checkpoints_path is not None),\
@@ -299,7 +300,7 @@ def evaluate(model=None, inp_images=None, annotations=None,
     n_pixels = np.zeros(model.n_classes)
 
     for inp, ann in tqdm(zip(inp_images, annotations)):
-        pr = predict(model, inp, read_image_type=read_image_type)
+        pr = predict(model, inp, read_image_type=read_image_type, imgNorm=imgNorm)
         gt = get_segmentation_array(ann, model.n_classes,
                                     model.output_width, model.output_height,
                                     no_reshape=True, read_image_type=read_image_type)
@@ -381,96 +382,159 @@ def _merge_lines(line_list):
 
 
 def _get_egolanes_points(mask):
-    h, w, _ = mask.shape
-    image_l = (mask % 2)*100
-    image_r = (mask // 2)*100
+    # mask value would be (0, 0, 0), (1, 1, 1) or (2, 2, 2)
+    h, w, _ = mask.shape # get the shape of the mask - will be equal to input image shape not model output shape
+    image_l = (mask % 2)*100 # remove right lane which has pixels (2, 2, 2) and make it (0, 0, 0)
+    image_r = (mask // 2)*100 # remove left lane which has pixels (1, 1, 1) and make it (0, 0, 0)
     uint8_img_l = np.uint8(image_l[:,:,0])
     uint8_img_r = np.uint8(image_r[:,:,0])
 
-    lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_l, 1, np.pi/30, 50, minLineLength=20, maxLineGap=10))
-    lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_r, 1, np.pi/30, 50, minLineLength=20, maxLineGap=10))
+    lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_l, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
+    lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_r, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
                                           
     intersection_pts = 0
     list_vx = []
     list_vy = []
     list_x1 = []
     list_x2 = []
-    list_lw = [] # lane width
+    list_lw = [] # lane width, not being used right now
     mode_vx, mode_vy = None,None
     x1_intercept_mode, x2_intercept_mode = None, None
+    x1_intercept_multiple_modes, x2_intercept_multiple_modes = None, None
 
-    # if both the lines are predicted
+    # if there is at least one line predicted for each lane, find vx, vy, x1 and x2 for all lane pairs
     if lines_l is not None and lines_r is not None:
         for line_l in lines_l:
             for line_r in lines_r:
                 x1_l, y1_l, x2_l, y2_l = line_l[0]
                 x1_r, y1_r, x2_r, y2_r = line_r[0]
-                l_slope, l_intercept = np.polyfit((x1_l, x2_l), (y1_l, y2_l), 1)
-                r_slope, r_intercept = np.polyfit((x1_r, x2_r), (y1_r, y2_r), 1)
-        vx = int((r_intercept - l_intercept) / (l_slope - r_slope))
-        vy = int(l_slope*((r_intercept - l_intercept)/ (l_slope - r_slope)) + l_intercept)
-        try:
-            x1_intercept = int((h-1 - l_intercept)/(l_slope+1e6))
-            x2_intercept = int((h-1 - r_intercept)/(r_slope+1e6))
-        except:
-            print(l_slope, r_slope)
-        # append valid intercepts to the list
-        if x1_intercept > -3*w and x2_intercept > -3*w and x1_intercept < 3*w and x2_intercept < 3*w:
-            list_vx.append(vx)
-            list_vy.append(vy)
-            list_x1.append(x1_intercept)
-            list_x2.append(x2_intercept)
-            list_lw.append(abs(x2_intercept - x1_intercept))
-            intersection_pts += 1
-        # calculate vx based on mode
+                vx, vy = None, None
+                intercept_x2, intercept_x1 = None, None
+
+                try:
+                    slope_l, intercept_l = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
+                    if math.isinf(slope_l) or math.isinf(intercept_l):
+                        slope_l, intercept_l = None, None
+                except ZeroDivisionError:
+                    slope_l, intercept_l = None, None
+                except Exception as e:
+                    print("error in left slope and intercept calc, left points", x1_l, y1_l, x2_l, y2_l, e)
+                
+                try:
+                    slope_r, intercept_r = (y2_r - y1_r)/(x2_r - x1_r), y1_r - (x1_r*(y2_r - y1_r))/(x2_r - x1_r)
+                    if math.isinf(slope_r) or math.isinf(intercept_r):
+                        slope_r, intercept_r = None, None
+                except ZeroDivisionError:
+                    slope_r, intercept_r = None, None
+                except Exception as e:
+                    print("error in right slope and intercept calc, right points", x1_r, y1_r, x2_r, y2_r, e)
+                
+                # calculate vx and vy if slopes and intercepts are defined
+                if all(v is not None for v in [slope_l, intercept_l, slope_r, intercept_r]):
+                    try:
+                        vx = int((intercept_r - intercept_l) / (slope_l - slope_r))
+                    except Exception as e:
+                        print("error in vx calc, s_l, i_l, s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
+                        print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
+                        
+                        vx = None
+                    try:
+                        vy = int(slope_l*((intercept_r - intercept_l)/ (slope_l - slope_r)) + intercept_l)
+                    except Exception as e:
+                        print("error in vy calc, s_l, i_l s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
+                        print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
+
+                        vy = None
+
+                # x1 calculation
+                if slope_l is not None and intercept_l is not None:
+                    try:
+                        intercept_x1 = int((h-1 - intercept_l)/(slope_l+1e-6))
+                    except Exception as e:
+                        print("Error in intercept x1 calc", slope_l, intercept_l, e)
+                
+                
+                # x2 calculation
+                if slope_r is not None and intercept_r is not None:
+                    try:
+                        intercept_x2 = int((h-1 - intercept_r)/(slope_r+1e-6))
+                    except Exception as e:
+                        print("Error in intercept x1 calc", slope_r, intercept_r, e)
+                
+                
+                # append valid intercepts to the list if they fall in certain range
+                if vx is not None:
+                    list_vx.append(vx)
+                if vy is not None:
+                    list_vy.append(vy)
+                if intercept_x1 is not None and (-3*w < intercept_x1 < 3*w):
+                    list_x1.append(intercept_x1) 
+                if intercept_x2 is not None and (-3*w < intercept_x2 < 3*w):
+                    list_x2.append(intercept_x2)
+                if (intercept_x1 is not None) and (intercept_x2 is not None) and (-3*w < intercept_x1 < 3*w) and (-3*w < intercept_x2 < 3*w):
+                    list_lw.append(abs(intercept_x2 - intercept_x1)) 
+                intersection_pts += 1
+        # calculate vx mode
         f_vx, b_vx = np.histogram(list_vx)
         mode_vx = int(b_vx[np.argmax(f_vx)])
-        # calculate vy based on mode
+        # calculate vy  mode
         f_vy, b_vy = np.histogram(list_vy)
         mode_vy = int(b_vy[np.argmax(f_vy)])
-        # find x1 intercept based on mode
+        # find x1 intercept mode
         f_x1, b_x1 = np.histogram(list_x1, bins=np.arange(-3*w,3*w,w/20))
         x1_intercept_mode = int(b_x1[np.argmax(f_x1)])
         x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
-        # find x2 intercept based on mode
+        # find x2 intercept mode
         f_x2, b_x2 = np.histogram(list_x2, bins=np.arange(-3*w,3*w,w/20))
         x2_intercept_mode = int(b_x2[np.argmax(f_x2)])
         x2_intercept_multiple_modes = [b_x2[idx] for idx in find_peaks(f_x2, height=20)[0]]
     else:
+        # calculate x1_intecept and (vx, vy) vy=0
         try:
             if lines_l is not None:
+                list_x1, list_vx = [], []
                 for line_l in lines_l:
                     x1_l, y1_l, x2_l, y2_l = line_l[0]
-                    l_slope, l_intercept = np.polyfit((x1_l, x2_l), (y1_l, y2_l), 1)
-                    x1_intercept = int((h-1 - l_intercept)/l_slope)
-                    vx =  int((0 - l_intercept)/l_slope)
-                    if x1_intercept > -3*w and x1_intercept < 3*w:
-                        list_x1.append(x1_intercept)
-                        list_vx.append(vx)
-            f_x1, b_x1 = np.histogram(list_x1, bins=np.arange(-3*w,3*w,w/20))
-            x1_intercept_mode = int(b_x1[np.argmax(f_x1)])
-            # calculate vx based on mode
-            f_vx, b_vx = np.histogram(list_vx)
-            mode_vx = int(b_vx[np.argmax(f_vx)])
-            x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
+                    try:
+                        l_slope, l_intercept = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
+                        x1_intercept = int((h-1 - l_intercept)/l_slope)
+                        vx =  int((0 - l_intercept)/l_slope)
+                        if x1_intercept > -3*w and x1_intercept < 3*w:
+                            list_x1.append(x1_intercept)
+                            list_vx.append(vx)
+                    except:
+                        continue
+                f_x1, b_x1 = np.histogram(list_x1, bins=np.arange(-3*w,3*w,w/20))
+                x1_intercept_mode = int(b_x1[np.argmax(f_x1)])
+                # calculate vx based on mode
+                f_vx, b_vx = np.histogram(list_vx)
+                mode_vx = int(b_vx[np.argmax(f_vx)])
+                mode_vy = 0
+                x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
         except Exception as e:
             print("Error finding x1 intercepts when x2 is None: ", e)
+        
         try:
             if lines_r is not None:
+                list_x2, list_vx = [], []
                 for line_r in lines_r:
                     x1_r, y1_r, x2_r, y2_r = line_r[0]
-                    r_slope, r_intercept = np.polyfit((x1_r, x2_r), (y1_r, y2_r), 1)
-                    x2_intercept = int((h-1 - r_intercept)/r_slope)
-                    vx =  int((0 - r_intercept)/r_slope) 
-                if x2_intercept > -3*w and x2_intercept < 3*w:
-                        list_x2.append(x2_intercept)
-            f_x2, b_x2 = np.histogram(list_x2, bins=np.arange(-3*w,3*w,w/20))
-            x2_intercept_mode = int(b_x2[np.argmax(f_x2)])
-            # calculate vx based on mode
-            f_vx, b_vx = np.histogram(list_vx)
-            mode_vx = int(b_vx[np.argmax(f_vx)])
-            x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
-            x2_intercept_multiple_modes = [b_x2[idx] for idx in find_peaks(f_x2, height=20)[0]]
+                    try:
+                        r_slope, r_intercept = (y2_r - y1_r)/(x2_r - x1_r), y1_r - (x1_r*(y2_r - y1_r))/(x2_r - x1_r)
+                        x2_intercept = int((h-1 - r_intercept)/r_slope)
+                        vx =  int((0 - r_intercept)/r_slope)
+                        if x2_intercept > -3*w and x2_intercept < 3*w:
+                            list_x2.append(x2_intercept)
+                            list_vx.append(vx)
+                    except:
+                        continue
+                f_x2, b_x2 = np.histogram(list_x2, bins=np.arange(-3*w,3*w,w/20))
+                x2_intercept_mode = int(b_x2[np.argmax(f_x2)])
+                # calculate vx based on mode
+                f_vx, b_vx = np.histogram(list_vx)
+                mode_vx = int(b_vx[np.argmax(f_vx)])
+                mode_vy = 0
+                x2_intercept_multiple_modes = [b_x2[idx] for idx in find_peaks(f_x2, height=20)[0]]
         except Exception as e:
             print("Error finding x2 intercepts when x1 is None: ", e)
     
@@ -484,7 +548,7 @@ def _get_egolanes_points(mask):
 
 
 def evaluate_egolanes(model=None, inp_images=None, annotations=None,
-                      inp_images_dir=None, annotations_dir=None, out_dir=None, checkpoints_path=None, read_image_type=1):
+                      inp_images_dir=None, annotations_dir=None, out_dir=None, checkpoints_path=None, read_image_type=1,imgNorm="divide"):
 
     if model is None:
         assert (checkpoints_path is not None),\
@@ -507,7 +571,7 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
 
     errors = []
     for inp, ann in tqdm(zip(inp_images, annotations)):
-        pr = predict(model, inp, read_image_type=read_image_type)
+        pr = predict(model, inp, read_image_type=read_image_type, imgNorm=imgNorm)
         
         gt = get_segmentation_array(ann, model.n_classes, model.output_width, model.output_height, no_reshape=True, read_image_type=read_image_type) #one hot encoded array
         gt = gt.argmax(-1)
@@ -532,9 +596,6 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
             error += (egolanes_pts_gt["vy_mode"] - egolanes_pts_pr["vy_mode"])**2
         error = math.sqrt(error)
         errors.append(error)
-        #print("\nEgolanes GT", egolanes_pts_gt)
-        #print("Egolanes PR", egolanes_pts_pr)
-        #print("-"*50)
         
         if out_dir is not None:
             os.makedirs(out_dir, exist_ok=True)
@@ -554,10 +615,13 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
                 cv2.line(inp_img, (egolanes_pts_gt["x2_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), (0, 255, 0), 2)
             elif egolanes_pts_gt["x1_intercept_mode"] is not None:
                 cv2.line(inp_img, (egolanes_pts_gt["x1_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], 0), (0, 255, 0), 2)
-            elif egolanes_pts_gt["x2_intercept_mode"] is not None: 
+            elif egolanes_pts_gt["x2_intercept_mode"] is not None:
                 cv2.line(inp_img, (egolanes_pts_gt["x2_intercept_mode"], inp_h-1), (egolanes_pts_gt["vx_mode"], 0), (0, 255, 0), 2)
             # code to annotate image with the predictions
-            if egolanes_pts_pr["vx_mode"] is not None and egolanes_pts_pr["vy_mode"] is not None:
+            if all(v is not None for v in [egolanes_pts_pr["vx_mode"],\
+                egolanes_pts_pr["vy_mode"],\
+                egolanes_pts_pr["x1_intercept_mode"],\
+                egolanes_pts_pr["x2_intercept_mode"]]):
                 inp_img = cv2.circle(inp_img, (egolanes_pts_pr["vx_mode"], egolanes_pts_pr["vy_mode"]), 2, (0, 0, 255), 2)
                 cv2.line(inp_img, (egolanes_pts_pr["vx_mode"], 0), (egolanes_pts_pr["vx_mode"], inp_h-1), (0, 0, 255)) 
                 cv2.line(inp_img, (0, egolanes_pts_pr["vy_mode"]), (inp_w-1, egolanes_pts_pr["vy_mode"]), (0, 0, 255))

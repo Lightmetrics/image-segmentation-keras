@@ -23,10 +23,10 @@ from ..models.config import IMAGE_ORDERING
 from .augmentation import augment_seg, custom_augment_seg
 
 #EXPERIMENTAL:
-import tensorflow as tf
-from datetime import datetime 
-logdir = "logs/contrastive_viz/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-file_writer_contrastive = tf.summary.create_file_writer(logdir)
+# import tensorflow as tf
+# from datetime import datetime 
+# logdir = "logs/contrastive_viz/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+# file_writer_contrastive = tf.summary.create_file_writer(logdir)
 
 DATA_LOADER_SEED = 0
 
@@ -257,6 +257,7 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                                  do_contrastive=False,
                                  contrastive_name="contrast",
                                  custom_contrastives=[],
+                                 imgNorm = "divide",
                                  other_inputs_paths=None, preprocessing=None, 
                                  read_image_type=cv2.IMREAD_COLOR , 
                                  ignore_segs=False):
@@ -307,15 +308,15 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 if preprocessing is not None:
                     im = preprocessing(im)
 
-                X.append(get_image_array(im, input_width, input_height, imgNorm="divide", ordering=IMAGE_ORDERING))
+                X.append(get_image_array(im, input_width, input_height, imgNorm=imgNorm, ordering=IMAGE_ORDERING))
 
                 if not ignore_segs:
                     Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
                 
                 if do_contrastive:
                     for custom_contrastive in custom_contrastives:
-                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0], augmentation_name = custom_contrastive)
-                        X.append(get_image_array(im_contrastive, input_width, input_height, imgNorm="divide", ordering=IMAGE_ORDERING))
+                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0], imgNorm = imgNorm, augmentation_name = custom_contrastive)
+                        X.append(get_image_array(im_contrastive, input_width, input_height, ordering=IMAGE_ORDERING))
                         Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
             else:
 
@@ -344,7 +345,7 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 oth = []
                 for i, image in enumerate(ims):
                     oth_im = get_image_array(image, input_width,
-                                             input_height, ordering=IMAGE_ORDERING)
+                                             input_height, imgNorm = imgNorm, ordering=IMAGE_ORDERING)
 
                     if preprocessing is not None:
                         if isinstance(preprocessing, Sequence):
@@ -368,6 +369,6 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 for i in range(0, batch_size*(n_contrastive+1),n_contrastive+1):
                     for j in range(i+1, n_contrastive+1):
                         assert (Y[i] == Y[i+j]).all(), f"Some problem with contrast augumentation segmen instance {i} and {i+j}"
-            with file_writer_contrastive.as_default():
-                tf.summary.image("Contrastive batch", np.array(X), step=iter_num, max_outputs=batch_size*(n_contrastive+1))
+            # with file_writer_contrastive.as_default():
+            #     tf.summary.image("Contrastive batch", np.array(X), step=iter_num, max_outputs=batch_size*(n_contrastive+1))
             yield np.array(X), np.array(Y)
