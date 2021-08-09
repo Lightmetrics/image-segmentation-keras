@@ -1,5 +1,8 @@
 from tensorflow.keras.models import *
 from tensorflow.keras.layers import *
+from tensorflow.keras import backend as K
+import tensorflow as tf
+from tensorflow.python.ops import gen_image_ops
 
 from .config import IMAGE_ORDERING
 from .model_utils import get_segmentation_model
@@ -8,29 +11,45 @@ from .mobilenet import get_mobilenet_encoder
 from .basic_models import vanilla_encoder
 from .resnet50 import get_resnet50_encoder
 
+# def UpSampling2DBilinear(size, data_format):
+#     # return Lambda(lambda x: gen_image_ops.resize_bilinear(x, size, align_corners=False, half_pixel_centers=False))
+#     return Lambda(lambda x: tf.compat.v1.image.resize_bilinear(x, size, align_corners=False, half_pixel_centers=False))
+
+def UpSampling2DBilinear(stride, data_format=None, **kwargs):
+    def layer(x):
+        input_shape = K.int_shape(x)
+        output_shape = (stride[0] * input_shape[1], stride[1] * input_shape[2])
+        return tf.compat.v1.image.resize_bilinear(x, output_shape, align_corners=False, half_pixel_centers=False)
+    return Lambda(layer, **kwargs)
 
 def segnet_decoder(f, n_classes, n_up=3):
 
     assert n_up >= 2
+    
+    custom = False
+    if custom:
+        upsample_func = UpSampling2DBilinear
+    else:
+        upsample_func = UpSampling2D
 
     o = f
     o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
     o = (Conv2D(512, (3, 3), padding='valid', data_format=IMAGE_ORDERING))(o)
     o = (BatchNormalization())(o)
 
-    o = (UpSampling2D((2, 2), data_format=IMAGE_ORDERING))(o)
+    o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
     o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
     o = (Conv2D(256, (3, 3), padding='valid', data_format=IMAGE_ORDERING))(o)
     o = (BatchNormalization())(o)
 
     for _ in range(n_up-2):
-        o = (UpSampling2D((2, 2), data_format=IMAGE_ORDERING))(o)
+        o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
         o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
         o = (Conv2D(128, (3, 3), padding='valid',
              data_format=IMAGE_ORDERING))(o)
         o = (BatchNormalization())(o)
 
-    o = (UpSampling2D((2, 2), data_format=IMAGE_ORDERING))(o)
+    o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
     o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
     o = (Conv2D(64, (3, 3), padding='valid', data_format=IMAGE_ORDERING, name="seg_feats"))(o)
     o = (BatchNormalization())(o)
