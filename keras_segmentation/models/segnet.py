@@ -11,10 +11,6 @@ from .mobilenet import get_mobilenet_encoder
 from .basic_models import vanilla_encoder
 from .resnet50 import get_resnet50_encoder
 
-# def UpSampling2DBilinear(size, data_format):
-#     # return Lambda(lambda x: gen_image_ops.resize_bilinear(x, size, align_corners=False, half_pixel_centers=False))
-#     return Lambda(lambda x: tf.compat.v1.image.resize_bilinear(x, size, align_corners=False, half_pixel_centers=False))
-
 def UpSampling2DBilinear(stride, data_format=None, **kwargs):
     def layer(x):
         input_shape = K.int_shape(x)
@@ -26,7 +22,7 @@ def segnet_decoder(f, n_classes, n_up=3):
 
     assert n_up >= 2
     
-    custom = False
+    custom = True
     if custom:
         upsample_func = UpSampling2DBilinear
     else:

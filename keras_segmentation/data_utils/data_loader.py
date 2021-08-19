@@ -315,8 +315,8 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
                 
                 if do_contrastive:
                     for custom_contrastive in custom_contrastives:
-                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0], imgNorm = imgNorm, augmentation_name = custom_contrastive)
-                        X.append(get_image_array(im_contrastive, input_width, input_height, ordering=IMAGE_ORDERING))
+                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0],augmentation_name = custom_contrastive)
+                        X.append(get_image_array(im_contrastive, input_width, input_height, imgNorm = imgNorm, ordering=IMAGE_ORDERING))
                         Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
             else:
 
