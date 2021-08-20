@@ -22,7 +22,7 @@ def segnet_decoder(f, n_classes, n_up=3):
 
     assert n_up >= 2
     
-    custom = True
+    custom = False
     if custom:
         upsample_func = UpSampling2DBilinear
     else:
