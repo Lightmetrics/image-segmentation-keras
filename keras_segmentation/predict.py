@@ -99,7 +99,7 @@ def concat_lenends(seg_img, legend_img):
 
 
 def visualize_segmentation(seg_arr, inp_img=None, n_classes=None,
-                           colors=class_colors, class_names=None,
+                           colors=None, class_names=None,
                            overlay_img=False, show_legends=False,
                            prediction_width=None, prediction_height=None):
 
@@ -136,7 +136,7 @@ def predict(model=None, inp=None, out_fname=None,
             checkpoints_path=None, overlay_img=False,
             class_names=None, show_legends=False, colors=class_colors,
             prediction_width=None, prediction_height=None,
-            read_image_type=1, imgNorm="divide"):
+            read_image_type=1, imgNorm="sub_mean"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -177,10 +177,12 @@ def predict(model=None, inp=None, out_fname=None,
 def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      checkpoints_path=None, overlay_img=False,
                      class_names=None, show_legends=False, colors=class_colors,
-                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="divide"):
+                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="sub_mean"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
+
+    assert len(colors) == model.n_classes, "No. of classes in model and colors do not match"
 
     if inps is None and (inp_dir is not None):
         inps = glob.glob(os.path.join(inp_dir, "*.jpg")) + glob.glob(
@@ -232,7 +234,7 @@ def set_video(inp, video_name):
 def predict_video(model=None, inp=None, output=None,
                   checkpoints_path=None, display=False, overlay_img=True,
                   class_names=None, show_legends=False, colors=class_colors,
-                  prediction_width=None, prediction_height=None, imgNorm="divide"):
+                  prediction_width=None, prediction_height=None, imgNorm="sub_mean"):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -273,7 +275,7 @@ def predict_video(model=None, inp=None, output=None,
 
 
 def evaluate(model=None, inp_images=None, annotations=None,
-             inp_images_dir=None, annotations_dir=None, checkpoints_path=None, read_image_type=1, imgNorm="divide"):
+             inp_images_dir=None, annotations_dir=None, checkpoints_path=None, read_image_type=1, imgNorm="sub_mean"):
 
     if model is None:
         assert (checkpoints_path is not None),\
@@ -384,13 +386,26 @@ def _merge_lines(line_list):
 def _get_egolanes_points(mask):
     # mask value would be (0, 0, 0), (1, 1, 1) or (2, 2, 2)
     h, w, _ = mask.shape # get the shape of the mask - will be equal to input image shape not model output shape
-    image_l = (mask % 2)*100 # remove right lane which has pixels (2, 2, 2) and make it (0, 0, 0)
-    image_r = (mask // 2)*100 # remove left lane which has pixels (1, 1, 1) and make it (0, 0, 0)
-    uint8_img_l = np.uint8(image_l[:,:,0])
-    uint8_img_r = np.uint8(image_r[:,:,0])
 
-    lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_l, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
-    lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_r, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
+    classes_present = sorted(list(np.unique(mask)))
+    assert len(classes_present) == 3, f"Mask has more/less than 3 classes {np.unique(mask, return_counts=True)}"
+
+    class_1, class_2 = int(classes_present[1]), int(classes_present[2])
+
+    image_cl_1 = np.where(mask == class_1, mask * 100, 0)
+    image_cl_2 = np.where(mask == class_2, mask * 100, 0)
+    # image_l = (mask % 2)*100 # remove right lane which has pixels (2, 2, 2) and make it (0, 0, 0)
+    # image_r = (mask // 2)*100 # remove left lane which has pixels (1, 1, 1) and make it (0, 0, 0)
+    uint8_img_1 = np.uint8(image_cl_1[:,:,0])
+    uint8_img_2 = np.uint8(image_cl_2[:,:,0])
+
+    # Python params
+    # lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_l, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
+    # lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_r, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
+
+    # C++ params
+    lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_1, 5, np.pi/30, 30, minLineLength=0.1389*h, maxLineGap=0.1389*h*0.25))
+    lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_2, 5, np.pi/30, 30, minLineLength=0.1389*h, maxLineGap=0.1389*h*0.25))
                                           
     intersection_pts = 0
     list_vx = []
@@ -548,13 +563,15 @@ def _get_egolanes_points(mask):
 
 
 def evaluate_egolanes(model=None, inp_images=None, annotations=None,
-                      inp_images_dir=None, annotations_dir=None, out_dir=None, checkpoints_path=None, read_image_type=1,imgNorm="divide"):
+                      inp_images_dir=None, annotations_dir=None, out_dir=None, checkpoints_path=None, read_image_type=1,imgNorm="sub_mean", colors=None):
 
     if model is None:
         assert (checkpoints_path is not None),\
                 "Please provide the model or the checkpoints_path"
         model = model_from_checkpoint_path(checkpoints_path)
 
+    assert len(colors) == model.n_classes, "No. of classes in model and colors do not match"
+    
     if inp_images is None:
         assert (inp_images_dir is not None),\
                 "Please provide inp_images or inp_images_dir"
@@ -579,9 +596,10 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
         inp_img = cv2.imread(inp)
         inp_h, inp_w, _ = inp_img.shape
 
-        seg_out_pr = visualize_segmentation(pr, inp_img, n_classes=model.n_classes, colors=[(0, 0, 0), (1, 1, 1), (2, 2, 2)])
-        seg_out_gt = visualize_segmentation(gt, inp_img, n_classes=model.n_classes, colors=[(0, 0, 0), (1, 1, 1), (2, 2, 2)])
+        seg_out_pr = visualize_segmentation(pr, inp_img, n_classes=model.n_classes, colors=colors)
+        seg_out_gt = visualize_segmentation(gt, inp_img, n_classes=model.n_classes, colors=colors)
         # call a function to get x1, x2 and vx and vy for both and gt and pr, and find the error
+        print(ann)
         egolanes_pts_gt = _get_egolanes_points(seg_out_gt)
         egolanes_pts_pr = _get_egolanes_points(seg_out_pr)
 
@@ -604,8 +622,8 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
             
 	    #segmentation output overlayed on input image
             fused_img = visualize_segmentation(pr, inp_img, n_classes=model.n_classes, overlay_img=True, 
-                                               colors=[(0, 0, 0), (0, 0, 255), (0, 0, 125)],
-                                               show_legends=False, class_names=["B", "L", "R"])
+                                               colors=[(0, 0, 0), (0, 255, 0), (0, 0, 255), (255, 0, 0)],
+                                               show_legends=False)
             # code to annotate image with the ground truth
             if egolanes_pts_gt["vx_mode"] is not None and egolanes_pts_gt["vy_mode"] is not None:
                 inp_img = cv2.circle(inp_img, (egolanes_pts_gt["vx_mode"], egolanes_pts_gt["vy_mode"]), 2, (0, 255, 0), 2)

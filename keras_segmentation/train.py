@@ -66,7 +66,7 @@ def weighted_categorical_crossentropy(class_weights):
             reduction=tf.keras.losses.Reduction.NONE)
         loss = cce(gt, pr)
         weighted_loss = loss * weights
-        print(weighted_loss.shape)
+        # print(weighted_loss.shape)
         return tf.reduce_mean(weighted_loss)
     return loss
 
@@ -215,6 +215,42 @@ def joint_ce_cont_loss(batch_size, n_contrastive, contrastive_loss_weight=0.3):
 #     loss.__name__ = "classwise_iou"
 #     return loss
 
+class WeightedIOU(tf.keras.metrics.Metric):
+    def __init__(self, n_classes, class_weights, name="weighted_iou"):
+        super(WeightedIOU, self).__init__()
+
+        assert len(class_weights.values()) == n_classes, "length of class weights and number of classes do not match"
+
+        self.n_classes = n_classes
+        self.weighted_iou = self.add_weight(name=name, initializer='zeros')
+        self.class_weights = np.array(list(class_weights.values())).astype(float)
+
+    # Currently metric calculation has been implemented using numpy which runs operations on CPU only
+    # TODO: Re-implement using keras backend (tf.keras.backend) which runs operations on GPU
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.math.argmax(y_true, axis=-1).numpy()
+        y_pred = tf.math.argmax(y_pred, axis=-1).numpy()
+
+        tp = np.zeros(self.n_classes)
+        fp = np.zeros(self.n_classes)
+        fn = np.zeros(self.n_classes)
+        n_pixels = np.zeros(self.n_classes)
+
+        for cl_i in range(self.n_classes):
+            tp[cl_i] += np.sum((y_pred == cl_i) * (y_true == cl_i))
+            fp[cl_i] += np.sum((y_pred == cl_i) * ((y_true != cl_i)))
+            fn[cl_i] += np.sum((y_pred != cl_i) * ((y_true == cl_i)))
+            n_pixels[cl_i] += np.sum(y_true == cl_i)
+
+        cl_wise_score = tp / (tp + fp + fn + np.finfo(float).eps)
+        weighted_iou = np.sum(cl_wise_score * self.class_weights)
+        self.weighted_iou.assign(weighted_iou)
+
+    def result(self):
+        return self.weighted_iou
+
+    def reset_states(self):
+        self.weighted_iou.assign(0.)
 
 class CheckpointsCallback(Callback):
     def __init__(self, checkpoints_path):
@@ -254,7 +290,7 @@ def train(model,
           do_contrastive=False,
           custom_contrastives=None,
           contrastive_loss_weight=0.3,
-          imgNorm = "divide",
+          imgNorm = "sub_mean",
           other_inputs_paths=None,
           preprocessing=None,
           class_weights=None,
@@ -289,7 +325,8 @@ def train(model,
         if class_weights:
             model.compile(loss=weighted_categorical_crossentropy(class_weights), 
                             optimizer=optimizer_name, 
-                            metrics=['acc'])
+                            metrics=['acc', WeightedIOU(n_classes, class_weights)],
+                            run_eagerly=True)
         elif do_shape:
             model.compile(loss=joint_ce_shape_loss(output_height, output_width, shape_loss_weight),
                             optimizer=optimizer_name,
@@ -374,7 +411,10 @@ def train(model,
         default_callback = ModelCheckpoint(
             filepath=checkpoints_path + ".{epoch:05d}",
             save_weights_only=True,
-            verbose=True
+            verbose=True,
+            monitor='val_weighted_iou',
+            mode='max',
+            save_best_only=True
         )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
