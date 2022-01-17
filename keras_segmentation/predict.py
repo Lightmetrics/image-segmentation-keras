@@ -383,29 +383,28 @@ def _merge_lines(line_list):
 
 
 
-def _get_egolanes_points(mask):
-    # mask value would be (0, 0, 0), (1, 1, 1) or (2, 2, 2)
+def _get_egolanes_points(mask, n_classes):
     h, w, _ = mask.shape # get the shape of the mask - will be equal to input image shape not model output shape
 
-    classes_present = sorted(list(np.unique(mask)))
-    assert len(classes_present) == 3, f"Mask has more/less than 3 classes {np.unique(mask, return_counts=True)}"
+    class_masks = {}
+    for class_idx in range(1, n_classes):
+        curr_class_mask = np.where(mask % n_classes == class_idx, 255, 0)
 
-    class_1, class_2 = int(classes_present[1]), int(classes_present[2])
+        # Check if there are any pixels of current class index
+        if (np.any(curr_class_mask) == True):
+            class_masks[str(class_idx)] = np.uint8(curr_class_mask[:,:,0])
 
-    image_cl_1 = np.where(mask == class_1, mask * 100, 0)
-    image_cl_2 = np.where(mask == class_2, mask * 100, 0)
-    # image_l = (mask % 2)*100 # remove right lane which has pixels (2, 2, 2) and make it (0, 0, 0)
-    # image_r = (mask // 2)*100 # remove left lane which has pixels (1, 1, 1) and make it (0, 0, 0)
-    uint8_img_1 = np.uint8(image_cl_1[:,:,0])
-    uint8_img_2 = np.uint8(image_cl_2[:,:,0])
+    class_lines = {}
+    for class_idx, class_mask in class_masks.items():
+        # Python params
+        curr_class_lines = _merge_lines(cv2.HoughLinesP(class_mask, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
+        
+        # C++ params
+        # curr_class_lines = _merge_lines(cv2.HoughLinesP(class_mask, 5, np.pi/30, 30, minLineLength=0.1389*h, maxLineGap=0.1389*h*0.25))
 
-    # Python params
-    # lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_l, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
-    # lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_r, 2, np.pi/30, 50, minLineLength=10, maxLineGap=30))
-
-    # C++ params
-    lines_l = _merge_lines(cv2.HoughLinesP(uint8_img_1, 5, np.pi/30, 30, minLineLength=0.1389*h, maxLineGap=0.1389*h*0.25))
-    lines_r = _merge_lines(cv2.HoughLinesP(uint8_img_2, 5, np.pi/30, 30, minLineLength=0.1389*h, maxLineGap=0.1389*h*0.25))
+        # Check if curr_class_lines are None
+        if (curr_class_lines is not None):
+            class_lines[class_idx] = curr_class_lines
                                           
     intersection_pts = 0
     list_vx = []
@@ -417,78 +416,112 @@ def _get_egolanes_points(mask):
     x1_intercept_mode, x2_intercept_mode = None, None
     x1_intercept_multiple_modes, x2_intercept_multiple_modes = None, None
 
-    # if there is at least one line predicted for each lane, find vx, vy, x1 and x2 for all lane pairs
-    if lines_l is not None and lines_r is not None:
+    class_list = list(class_lines.keys())
+    class_list_len = len(class_list)
+
+    if (class_list_len == 1):
+        list_x1, list_vx = [], []
+
+        lines_l = class_lines[class_list[0]]
         for line_l in lines_l:
-            for line_r in lines_r:
-                x1_l, y1_l, x2_l, y2_l = line_l[0]
-                x1_r, y1_r, x2_r, y2_r = line_r[0]
-                vx, vy = None, None
-                intercept_x2, intercept_x1 = None, None
-
-                try:
-                    slope_l, intercept_l = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
-                    if math.isinf(slope_l) or math.isinf(intercept_l):
-                        slope_l, intercept_l = None, None
-                except ZeroDivisionError:
-                    slope_l, intercept_l = None, None
-                except Exception as e:
-                    print("error in left slope and intercept calc, left points", x1_l, y1_l, x2_l, y2_l, e)
-                
-                try:
-                    slope_r, intercept_r = (y2_r - y1_r)/(x2_r - x1_r), y1_r - (x1_r*(y2_r - y1_r))/(x2_r - x1_r)
-                    if math.isinf(slope_r) or math.isinf(intercept_r):
-                        slope_r, intercept_r = None, None
-                except ZeroDivisionError:
-                    slope_r, intercept_r = None, None
-                except Exception as e:
-                    print("error in right slope and intercept calc, right points", x1_r, y1_r, x2_r, y2_r, e)
-                
-                # calculate vx and vy if slopes and intercepts are defined
-                if all(v is not None for v in [slope_l, intercept_l, slope_r, intercept_r]):
-                    try:
-                        vx = int((intercept_r - intercept_l) / (slope_l - slope_r))
-                    except Exception as e:
-                        print("error in vx calc, s_l, i_l, s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
-                        print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
-                        
-                        vx = None
-                    try:
-                        vy = int(slope_l*((intercept_r - intercept_l)/ (slope_l - slope_r)) + intercept_l)
-                    except Exception as e:
-                        print("error in vy calc, s_l, i_l s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
-                        print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
-
-                        vy = None
-
-                # x1 calculation
-                if slope_l is not None and intercept_l is not None:
-                    try:
-                        intercept_x1 = int((h-1 - intercept_l)/(slope_l+1e-6))
-                    except Exception as e:
-                        print("Error in intercept x1 calc", slope_l, intercept_l, e)
-                
-                
-                # x2 calculation
-                if slope_r is not None and intercept_r is not None:
-                    try:
-                        intercept_x2 = int((h-1 - intercept_r)/(slope_r+1e-6))
-                    except Exception as e:
-                        print("Error in intercept x1 calc", slope_r, intercept_r, e)
-                
-                
-                # append valid intercepts to the list if they fall in certain range
-                if vx is not None:
+            x1_l, y1_l, x2_l, y2_l = line_l[0]
+            
+            try:
+                l_slope, l_intercept = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
+                x1_intercept = int((h-1 - l_intercept)/l_slope)
+                vx =  int((0 - l_intercept)/l_slope)
+                if x1_intercept > -3*w and x1_intercept < 3*w:
+                    list_x1.append(x1_intercept)
                     list_vx.append(vx)
-                if vy is not None:
-                    list_vy.append(vy)
-                if intercept_x1 is not None and (-3*w < intercept_x1 < 3*w):
-                    list_x1.append(intercept_x1) 
-                if intercept_x2 is not None and (-3*w < intercept_x2 < 3*w):
-                    list_x2.append(intercept_x2)
-                if (intercept_x1 is not None) and (intercept_x2 is not None) and (-3*w < intercept_x1 < 3*w) and (-3*w < intercept_x2 < 3*w):
-                    list_lw.append(abs(intercept_x2 - intercept_x1)) 
-                intersection_pts += 1
+            except:
+                continue
+        f_x1, b_x1 = np.histogram(list_x1, bins=np.arange(-3*w,3*w,w/20))
+        x1_intercept_mode = int(b_x1[np.argmax(f_x1)])
+        
+        # calculate vx based on mode
+        f_vx, b_vx = np.histogram(list_vx)
+        mode_vx = int(b_vx[np.argmax(f_vx)])
+        mode_vy = 0
+        x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
+
+    else:
+        for i in range(class_list_len):
+            lines_l = class_lines[class_list[i]]
+
+            for j in range(i + 1, class_list_len):
+                lines_r = class_lines[class_list[j]]
+
+                for line_l in lines_l:
+                    for line_r in lines_r:
+                        x1_l, y1_l, x2_l, y2_l = line_l[0]
+                        x1_r, y1_r, x2_r, y2_r = line_r[0]
+                        vx, vy = None, None
+                        intercept_x2, intercept_x1 = None, None
+
+                        try:
+                            slope_l, intercept_l = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
+                            if math.isinf(slope_l) or math.isinf(intercept_l):
+                                slope_l, intercept_l = None, None
+                        except ZeroDivisionError:
+                            slope_l, intercept_l = None, None
+                        except Exception as e:
+                            print("error in left slope and intercept calc, left points", x1_l, y1_l, x2_l, y2_l, e)
+                        
+                        try:
+                            slope_r, intercept_r = (y2_r - y1_r)/(x2_r - x1_r), y1_r - (x1_r*(y2_r - y1_r))/(x2_r - x1_r)
+                            if math.isinf(slope_r) or math.isinf(intercept_r):
+                                slope_r, intercept_r = None, None
+                        except ZeroDivisionError:
+                            slope_r, intercept_r = None, None
+                        except Exception as e:
+                            print("error in right slope and intercept calc, right points", x1_r, y1_r, x2_r, y2_r, e)
+                        
+                        # calculate vx and vy if slopes and intercepts are defined
+                        if all(v is not None for v in [slope_l, intercept_l, slope_r, intercept_r]):
+                            try:
+                                vx = int((intercept_r - intercept_l) / (slope_l - slope_r))
+                            except Exception as e:
+                                print("error in vx calc, s_l, i_l, s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
+                                print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
+                                
+                                vx = None
+                            try:
+                                vy = int(slope_l*((intercept_r - intercept_l)/ (slope_l - slope_r)) + intercept_l)
+                            except Exception as e:
+                                print("error in vy calc, s_l, i_l s_r, i_r", slope_l, intercept_l, slope_r, intercept_r, e)
+                                print(x1_l, y1_l, x2_l, y2_l, x1_r, y1_r, x2_r, y2_r)
+
+                                vy = None
+
+                        # x1 calculation
+                        if slope_l is not None and intercept_l is not None:
+                            try:
+                                intercept_x1 = int((h-1 - intercept_l)/(slope_l+1e-6))
+                            except Exception as e:
+                                print("Error in intercept x1 calc", slope_l, intercept_l, e)
+                        
+                        
+                        # x2 calculation
+                        if slope_r is not None and intercept_r is not None:
+                            try:
+                                intercept_x2 = int((h-1 - intercept_r)/(slope_r+1e-6))
+                            except Exception as e:
+                                print("Error in intercept x1 calc", slope_r, intercept_r, e)
+                        
+                        
+                        # append valid intercepts to the list if they fall in certain range
+                        if vx is not None:
+                            list_vx.append(vx)
+                        if vy is not None:
+                            list_vy.append(vy)
+                        if intercept_x1 is not None and (-3*w < intercept_x1 < 3*w):
+                            list_x1.append(intercept_x1) 
+                        if intercept_x2 is not None and (-3*w < intercept_x2 < 3*w):
+                            list_x2.append(intercept_x2)
+                        if (intercept_x1 is not None) and (intercept_x2 is not None) and (-3*w < intercept_x1 < 3*w) and (-3*w < intercept_x2 < 3*w):
+                            list_lw.append(abs(intercept_x2 - intercept_x1)) 
+                        intersection_pts += 1
+
         # calculate vx mode
         f_vx, b_vx = np.histogram(list_vx)
         mode_vx = int(b_vx[np.argmax(f_vx)])
@@ -503,55 +536,6 @@ def _get_egolanes_points(mask):
         f_x2, b_x2 = np.histogram(list_x2, bins=np.arange(-3*w,3*w,w/20))
         x2_intercept_mode = int(b_x2[np.argmax(f_x2)])
         x2_intercept_multiple_modes = [b_x2[idx] for idx in find_peaks(f_x2, height=20)[0]]
-    else:
-        # calculate x1_intecept and (vx, vy) vy=0
-        try:
-            if lines_l is not None:
-                list_x1, list_vx = [], []
-                for line_l in lines_l:
-                    x1_l, y1_l, x2_l, y2_l = line_l[0]
-                    try:
-                        l_slope, l_intercept = (y2_l - y1_l)/(x2_l - x1_l), y1_l - (x1_l*(y2_l - y1_l))/(x2_l - x1_l)
-                        x1_intercept = int((h-1 - l_intercept)/l_slope)
-                        vx =  int((0 - l_intercept)/l_slope)
-                        if x1_intercept > -3*w and x1_intercept < 3*w:
-                            list_x1.append(x1_intercept)
-                            list_vx.append(vx)
-                    except:
-                        continue
-                f_x1, b_x1 = np.histogram(list_x1, bins=np.arange(-3*w,3*w,w/20))
-                x1_intercept_mode = int(b_x1[np.argmax(f_x1)])
-                # calculate vx based on mode
-                f_vx, b_vx = np.histogram(list_vx)
-                mode_vx = int(b_vx[np.argmax(f_vx)])
-                mode_vy = 0
-                x1_intercept_multiple_modes = [b_x1[idx] for idx in find_peaks(f_x1, height=20)[0]]
-        except Exception as e:
-            print("Error finding x1 intercepts when x2 is None: ", e)
-        
-        try:
-            if lines_r is not None:
-                list_x2, list_vx = [], []
-                for line_r in lines_r:
-                    x1_r, y1_r, x2_r, y2_r = line_r[0]
-                    try:
-                        r_slope, r_intercept = (y2_r - y1_r)/(x2_r - x1_r), y1_r - (x1_r*(y2_r - y1_r))/(x2_r - x1_r)
-                        x2_intercept = int((h-1 - r_intercept)/r_slope)
-                        vx =  int((0 - r_intercept)/r_slope)
-                        if x2_intercept > -3*w and x2_intercept < 3*w:
-                            list_x2.append(x2_intercept)
-                            list_vx.append(vx)
-                    except:
-                        continue
-                f_x2, b_x2 = np.histogram(list_x2, bins=np.arange(-3*w,3*w,w/20))
-                x2_intercept_mode = int(b_x2[np.argmax(f_x2)])
-                # calculate vx based on mode
-                f_vx, b_vx = np.histogram(list_vx)
-                mode_vx = int(b_vx[np.argmax(f_vx)])
-                mode_vy = 0
-                x2_intercept_multiple_modes = [b_x2[idx] for idx in find_peaks(f_x2, height=20)[0]]
-        except Exception as e:
-            print("Error finding x2 intercepts when x1 is None: ", e)
     
     results = {"x1_intercept_mode": x1_intercept_mode, 
     "x2_intercept_mode": x2_intercept_mode,
@@ -599,9 +583,8 @@ def evaluate_egolanes(model=None, inp_images=None, annotations=None,
         seg_out_pr = visualize_segmentation(pr, inp_img, n_classes=model.n_classes, colors=colors)
         seg_out_gt = visualize_segmentation(gt, inp_img, n_classes=model.n_classes, colors=colors)
         # call a function to get x1, x2 and vx and vy for both and gt and pr, and find the error
-        print(ann)
-        egolanes_pts_gt = _get_egolanes_points(seg_out_gt)
-        egolanes_pts_pr = _get_egolanes_points(seg_out_pr)
+        egolanes_pts_gt = _get_egolanes_points(seg_out_gt, model.n_classes)
+        egolanes_pts_pr = _get_egolanes_points(seg_out_pr, model.n_classes)
 
         error = 0
         if egolanes_pts_gt["x1_intercept_mode"] is not None and egolanes_pts_pr["x1_intercept_mode"] is not None:
