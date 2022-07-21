@@ -5,7 +5,7 @@ import sys
 import numpy as np
 
 import six
-from keras.callbacks import Callback
+from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.callbacks import ModelCheckpoint
 import tensorflow as tf
 import tensorflow.keras as keras
@@ -412,13 +412,21 @@ def train(model,
             filepath=checkpoints_path + ".{epoch:05d}",
             save_weights_only=True,
             verbose=True,
-            monitor='val_weighted_iou',
+            monitor='val_acc',
             mode='max',
+            save_best_only=True
+        )
+        save_min_val_loss_model_callback = ModelCheckpoint(
+            filepath=checkpoints_path + ".{epoch:05d}",
+            save_weights_only=True,
+            verbose=True,
+            monitor='val_loss',
+            mode='min',
             save_best_only=True
         )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-    callbacks = [default_callback]
+    callbacks = [default_callback, save_min_val_loss_model_callback]
 
     if not validate:
         history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,

@@ -6,6 +6,8 @@ import six
 
 import cv2
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from time import time
 
@@ -131,12 +133,37 @@ def visualize_segmentation(seg_arr, inp_img=None, n_classes=None,
 
     return seg_img
 
+def generate_prob_diff_heatmap(seg_map, heatmap_path):
+    # prob_diff = seg_map[:, :, 1] - seg_map[:, :, 0]
+    # np.clip(prob_diff, 0, None, out=prob_diff)
+    # # print(heatmap_path, np.min(prob_diff), np.max(prob_diff))
+    # # sns.set_theme()
+
+    # heatmap = sns.heatmap(prob_diff, linewidth=0.5, cmap='coolwarm')
+    # # heatmap_fig = heatmap.get_figure()
+    # # print(heatmap_path)
+    # plt.savefig(heatmap_path)
+    # plt.clf()
+    prob_map_0 = seg_map[:, :, 0]
+    prob_map_1 = seg_map[:, :, 1]
+    prob_map_2 = seg_map[:, :, 2]
+
+    fig, (ax_0, ax_1, ax_2) = plt.subplots(ncols=3)
+    fig.subplots_adjust(wspace=0.05)
+    sns.heatmap(prob_map_0, cmap='coolwarm', ax=ax_0, cbar=False)
+    sns.heatmap(prob_map_1, cmap='coolwarm', ax=ax_1, cbar=False)
+    sns.heatmap(prob_map_2, cmap='coolwarm', ax=ax_2, cbar=False)
+
+    fig.colorbar(ax_2.collections[0], ax=ax_2, location='right', use_gridspec=False, pad=0.2)
+    plt.savefig(heatmap_path)
+    plt.clf()
+    plt.close('all')
 
 def predict(model=None, inp=None, out_fname=None,
             checkpoints_path=None, overlay_img=False,
             class_names=None, show_legends=False, colors=class_colors,
             prediction_width=None, prediction_height=None,
-            read_image_type=1, imgNorm="sub_mean"):
+            read_image_type=1, imgNorm="sub_mean", heatmap_path=None):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -159,7 +186,11 @@ def predict(model=None, inp=None, out_fname=None,
     x = get_image_array(inp, input_width, input_height,imgNorm=imgNorm,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
+    pr_reshaped = pr.reshape((output_height, output_width, n_classes))
     pr = pr.reshape((output_height,  output_width, n_classes)).argmax(axis=2)
+
+    if not heatmap_path is None:
+        generate_prob_diff_heatmap(pr_reshaped, heatmap_path)
 
     seg_img = visualize_segmentation(pr, inp, n_classes=n_classes,
                                      colors=colors, overlay_img=overlay_img,
@@ -177,7 +208,7 @@ def predict(model=None, inp=None, out_fname=None,
 def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      checkpoints_path=None, overlay_img=False,
                      class_names=None, show_legends=False, colors=class_colors,
-                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="sub_mean"):
+                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="sub_mean", heatmap_path=None):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -198,6 +229,10 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
+    if not heatmap_path is None:
+        if not os.path.exists(heatmap_path):
+            os.makedirs(heatmap_path)
+
 
     for i, inp in enumerate(tqdm(inps)):
         if out_dir is None:
@@ -208,11 +243,18 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
             else:
                 out_fname = os.path.join(out_dir, str(i) + ".png")
 
+        heatmap_file_path = None
+        if not heatmap_path is None:
+            if isinstance(inp, six.string_types):
+                heatmap_file_path = os.path.join(heatmap_path, os.path.splitext(os.path.basename(inp))[0] + ".png")
+            else:
+                heatmap_file_path = os.path.join(heatmap_path, str(i) + ".png")
+
         pr = predict(model, inp, out_fname,
                      overlay_img=overlay_img, class_names=class_names,
                      show_legends=show_legends, colors=colors,
                      prediction_width=prediction_width,
-                     prediction_height=prediction_height, read_image_type=read_image_type, imgNorm=imgNorm)
+                     prediction_height=prediction_height, read_image_type=read_image_type, imgNorm=imgNorm, heatmap_path=heatmap_file_path)
 
         all_prs.append(pr)
 
