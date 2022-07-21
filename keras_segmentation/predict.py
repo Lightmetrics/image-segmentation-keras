@@ -163,7 +163,7 @@ def predict(model=None, inp=None, out_fname=None,
             checkpoints_path=None, overlay_img=False,
             class_names=None, show_legends=False, colors=class_colors,
             prediction_width=None, prediction_height=None,
-            read_image_type=1, imgNorm="sub_mean", heatmap_path=None):
+            read_image_type=1, imgNorm="sub_mean", heatmap_path=None, use_bg_prob_threshold=False, bg_prob_threshold=0.0):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -187,7 +187,20 @@ def predict(model=None, inp=None, out_fname=None,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
     pr_reshaped = pr.reshape((output_height, output_width, n_classes))
-    pr = pr.reshape((output_height,  output_width, n_classes)).argmax(axis=2)
+
+    if (use_bg_prob_threshold == True):
+        pr_0 = pr_reshaped[:, :, 0]
+        pr_0_bool = pr_0 >= bg_prob_threshold
+        pr_0 = pr_0_bool.astype('int') * 5
+
+        pr_rest = pr_reshaped[:, :, 1:n_classes]
+        pr_rest = pr_rest.argmax(axis=2) + 1
+
+        pr = np.maximum(pr_0, pr_rest)
+
+        pr = np.where(pr == 5, 0, pr).astype('int')
+    else:
+        pr = pr.reshape((output_height,  output_width, n_classes)).argmax(axis=2)
 
     if not heatmap_path is None:
         generate_prob_diff_heatmap(pr_reshaped, heatmap_path)
@@ -208,7 +221,9 @@ def predict(model=None, inp=None, out_fname=None,
 def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      checkpoints_path=None, overlay_img=False,
                      class_names=None, show_legends=False, colors=class_colors,
-                     prediction_width=None, prediction_height=None, read_image_type=1, imgNorm="sub_mean", heatmap_path=None):
+                     prediction_width=None, prediction_height=None, read_image_type=1, 
+                     imgNorm="sub_mean", heatmap_path=None, use_bg_prob_threshold=False, 
+                     bg_prob_threshold=0.0):
 
     if model is None and (checkpoints_path is not None):
         model = model_from_checkpoint_path(checkpoints_path)
@@ -254,7 +269,11 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      overlay_img=overlay_img, class_names=class_names,
                      show_legends=show_legends, colors=colors,
                      prediction_width=prediction_width,
-                     prediction_height=prediction_height, read_image_type=read_image_type, imgNorm=imgNorm, heatmap_path=heatmap_file_path)
+                     prediction_height=prediction_height, 
+                     read_image_type=read_image_type, imgNorm=imgNorm, 
+                     heatmap_path=heatmap_file_path, 
+                     use_bg_prob_threshold=use_bg_prob_threshold, 
+                     bg_prob_threshold=bg_prob_threshold)
 
         all_prs.append(pr)
 
@@ -317,7 +336,10 @@ def predict_video(model=None, inp=None, output=None,
 
 
 def evaluate(model=None, inp_images=None, annotations=None,
-             inp_images_dir=None, annotations_dir=None, checkpoints_path=None, read_image_type=1, imgNorm="sub_mean"):
+             inp_images_dir=None, annotations_dir=None, 
+             checkpoints_path=None, read_image_type=1, 
+             imgNorm="sub_mean", use_bg_prob_threshold=False,
+             bg_prob_threshold=0.0):
 
     if model is None:
         assert (checkpoints_path is not None),\
@@ -344,7 +366,7 @@ def evaluate(model=None, inp_images=None, annotations=None,
     n_pixels = np.zeros(model.n_classes)
 
     for inp, ann in tqdm(zip(inp_images, annotations)):
-        pr = predict(model, inp, read_image_type=read_image_type, imgNorm=imgNorm)
+        pr = predict(model, inp, read_image_type=read_image_type, imgNorm=imgNorm, use_bg_prob_threshold=use_bg_prob_threshold, bg_prob_threshold=bg_prob_threshold)
         gt = get_segmentation_array(ann, model.n_classes,
                                     model.output_width, model.output_height,
                                     no_reshape=True, read_image_type=read_image_type)
