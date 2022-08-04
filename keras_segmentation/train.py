@@ -6,10 +6,10 @@ import numpy as np
 
 import six
 from tensorflow.keras.callbacks import Callback
-from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
 import tensorflow as tf
 import tensorflow.keras as keras
-import keras_tuner as kt
+# import keras_tuner as kt
 
 from .data_utils.data_loader import image_segmentation_generator, \
     verify_segmentation_dataset
@@ -51,7 +51,7 @@ def masked_categorical_crossentropy(gt, pr):
 
 
 def weighted_categorical_crossentropy(class_weights):
-    from keras.losses import categorical_crossentropy
+    from tensorflow.keras.losses import categorical_crossentropy
     class_weights = list(class_weights.values())
 
     def loss(gt, pr):
@@ -408,16 +408,16 @@ def train(model,
             preprocessing=preprocessing, read_image_type=read_image_type)
 
     if callbacks is None and (not checkpoints_path is None):
-        default_callback = ModelCheckpoint(
-            filepath=checkpoints_path + ".{epoch:05d}",
-            save_weights_only=True,
-            verbose=True,
-            monitor='val_acc',
-            mode='max',
-            save_best_only=True
-        )
+        # default_callback = ModelCheckpoint(
+        #     filepath=checkpoints_path + ".{epoch:05d}",
+        #     save_weights_only=True,
+        #     verbose=True,
+        #     monitor='val_acc',
+        #     mode='max',
+        #     save_best_only=True
+        # )
         save_min_val_loss_model_callback = ModelCheckpoint(
-            filepath=checkpoints_path + ".{epoch:05d}",
+            filepath=checkpoints_path + ".{epoch:05d}-{val_loss:.2f}-{val_acc:.2f}",
             save_weights_only=True,
             verbose=True,
             monitor='val_loss',
@@ -426,7 +426,8 @@ def train(model,
         )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-    callbacks = [default_callback, save_min_val_loss_model_callback]
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, min_lr=0.00001, verbose=1, mode='min')
+    callbacks = [save_min_val_loss_model_callback, reduce_lr]
 
     if not validate:
         history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,

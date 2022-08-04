@@ -154,7 +154,11 @@ def generate_prob_diff_heatmap(seg_map, heatmap_path):
     sns.heatmap(prob_map_1, cmap='coolwarm', ax=ax_1, cbar=False)
     sns.heatmap(prob_map_2, cmap='coolwarm', ax=ax_2, cbar=False)
 
+    print(ax_2.collections[0])
     fig.colorbar(ax_2.collections[0], ax=ax_2, location='right', use_gridspec=False, pad=0.2)
+    # cbar = fig.colorbar(prob_map_2, ax=(ax_0, ax_1, ax_2).ravel().tolist(), shrink=0.95)
+    # cbar.set_ticks(np.arange(0, 0.5, 1.0))
+    # cbar.set_ticklabels(['low', 'medium', 'high'])
     plt.savefig(heatmap_path)
     plt.clf()
     plt.close('all')
@@ -187,6 +191,9 @@ def predict(model=None, inp=None, out_fname=None,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
     pr_reshaped = pr.reshape((output_height, output_width, n_classes))
+    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_0.csv", pr_reshaped[:, :, 0], delimiter=",")
+    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_1.csv", pr_reshaped[:, :, 1], delimiter=",")
+    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_2.csv", pr_reshaped[:, :, 2], delimiter=",")
 
     if (use_bg_prob_threshold == True):
         pr_0 = pr_reshaped[:, :, 0]
