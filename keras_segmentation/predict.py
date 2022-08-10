@@ -154,7 +154,7 @@ def generate_prob_diff_heatmap(seg_map, heatmap_path):
     sns.heatmap(prob_map_1, cmap='coolwarm', ax=ax_1, cbar=False)
     sns.heatmap(prob_map_2, cmap='coolwarm', ax=ax_2, cbar=False)
 
-    print(ax_2.collections[0])
+    # print(ax_2.collections[0])
     fig.colorbar(ax_2.collections[0], ax=ax_2, location='right', use_gridspec=False, pad=0.2)
     # cbar = fig.colorbar(prob_map_2, ax=(ax_0, ax_1, ax_2).ravel().tolist(), shrink=0.95)
     # cbar.set_ticks(np.arange(0, 0.5, 1.0))
@@ -191,9 +191,9 @@ def predict(model=None, inp=None, out_fname=None,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
     pr_reshaped = pr.reshape((output_height, output_width, n_classes))
-    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_0.csv", pr_reshaped[:, :, 0], delimiter=",")
-    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_1.csv", pr_reshaped[:, :, 1], delimiter=",")
-    np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_2.csv", pr_reshaped[:, :, 2], delimiter=",")
+    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_0.csv", pr_reshaped[:, :, 0], delimiter=",")
+    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_1.csv", pr_reshaped[:, :, 1], delimiter=",")
+    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_2.csv", pr_reshaped[:, :, 2], delimiter=",")
 
     if (use_bg_prob_threshold == True):
         pr_0 = pr_reshaped[:, :, 0]
@@ -398,6 +398,62 @@ def evaluate(model=None, inp_images=None, annotations=None,
         "mean_IU": mean_IU,
         "class_wise_IU": cl_wise_score
     }
+
+def evaluate_per_image(model=None, inp_images=None, annotations=None,
+             inp_images_dir=None, annotations_dir=None, 
+             checkpoints_path=None, read_image_type=1, 
+             imgNorm="sub_mean", use_bg_prob_threshold=False,
+             bg_prob_threshold=0.0):
+
+    if model is None:
+        assert (checkpoints_path is not None),\
+                "Please provide the model or the checkpoints_path"
+        model = model_from_checkpoint_path(checkpoints_path)
+
+    if inp_images is None:
+        assert (inp_images_dir is not None),\
+                "Please provide inp_images or inp_images_dir"
+        assert (annotations_dir is not None),\
+            "Please provide inp_images or inp_images_dir"
+
+        paths = get_pairs_from_paths(inp_images_dir, annotations_dir)
+        paths = list(zip(*paths))
+        inp_images = list(paths[0])
+        annotations = list(paths[1])
+
+    assert type(inp_images) is list
+    assert type(annotations) is list
+
+    iou_score_dict = {}
+
+    for inp, ann in tqdm(zip(inp_images, annotations)):
+        filename = inp.split('/')[-1]
+
+        pr = predict(model, inp, read_image_type=read_image_type, imgNorm=imgNorm, use_bg_prob_threshold=use_bg_prob_threshold, bg_prob_threshold=bg_prob_threshold)
+        gt = get_segmentation_array(ann, model.n_classes,
+                                    model.output_width, model.output_height,
+                                    no_reshape=True, read_image_type=read_image_type)
+        gt = gt.argmax(-1)
+        pr = pr.flatten()
+        gt = gt.flatten()
+
+        tp = np.zeros(model.n_classes)
+        fp = np.zeros(model.n_classes)
+        fn = np.zeros(model.n_classes)
+        n_pixels = np.zeros(model.n_classes)
+
+        for cl_i in range(model.n_classes):
+
+            tp[cl_i] = np.sum((pr == cl_i) * (gt == cl_i))
+            fp[cl_i] = np.sum((pr == cl_i) * ((gt != cl_i)))
+            fn[cl_i] = np.sum((pr != cl_i) * ((gt == cl_i)))
+            n_pixels[cl_i] = np.sum(gt == cl_i)
+
+        cl_wise_score = tp / (tp + fp + fn + 0.000000000001)
+
+        iou_score_dict[filename] = cl_wise_score
+
+    return iou_score_dict
 
 def _check_overlap(line1, line2):
     combination = np.array([line1,
