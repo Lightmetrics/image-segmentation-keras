@@ -372,3 +372,128 @@ def image_segmentation_generator(images_path, segs_path, batch_size,
             # with file_writer_contrastive.as_default():
             #     tf.summary.image("Contrastive batch", np.array(X), step=iter_num, max_outputs=batch_size*(n_contrastive+1))
             yield np.array(X), np.array(Y)
+
+def autoencoder_data_generator(images_path, segs_path, batch_size,
+                                 n_classes, input_height, input_width,
+                                 output_height, output_width,
+                                 do_augment=False,
+                                 augmentation_name = "aug_all",
+                                 custom_augmentation=None,
+                                 do_contrastive=False,
+                                 contrastive_name="contrast",
+                                 custom_contrastives=[],
+                                 imgNorm = "divide",
+                                 other_inputs_paths=None, preprocessing=None, 
+                                 read_image_type=cv2.IMREAD_COLOR , 
+                                 ignore_segs=False):
+    
+
+    if not ignore_segs:
+        img_seg_pairs = get_pairs_from_paths(images_path, segs_path, other_inputs_paths=other_inputs_paths)
+        random.shuffle(img_seg_pairs)
+        zipped = itertools.cycle(img_seg_pairs)
+    else:
+        img_list = get_image_list_from_path( images_path )
+        random.shuffle( img_list )
+        img_list_gen = itertools.cycle( img_list )
+
+    iter_num = 0
+    while True:
+        X = []
+        Y = []
+        n_contrastive = len(custom_contrastives)
+        if do_contrastive:
+            assert batch_size % (n_contrastive+1) == 0 , "Choose a batch-size such that batch size is divisible by number of contrastive augs"
+            batch_size == batch_size // (n_contrastive+1)
+        
+        iter_num += 1
+        for _ in range(batch_size): 
+            if other_inputs_paths is None:
+                if ignore_segs:
+                    im = next( img_list_gen )
+                    seg = None
+                else:
+                    im, seg = next(zipped)
+                    seg = cv2.imread(seg, 1)
+
+                im = cv2.imread(im, read_image_type)
+                
+
+                if do_augment:
+
+                    assert ignore_segs == False , "Not supported yet"
+
+                    if custom_augmentation is None:
+                        im, seg[:, :, 0] = augment_seg(im, seg[:, :, 0],
+                                                       augmentation_name)
+                    else:
+                        im, seg[:, :, 0] = custom_augment_seg(im, seg[:, :, 0],
+                                                              custom_augmentation)
+
+                if preprocessing is not None:
+                    im = preprocessing(im)
+
+                X.append(get_image_array(im, input_width, input_height, imgNorm=imgNorm, ordering=IMAGE_ORDERING))
+
+                if not ignore_segs:
+                    Y.append(get_image_array(im, input_width, input_height, imgNorm=imgNorm, ordering=IMAGE_ORDERING))
+                
+                if do_contrastive:
+                    for custom_contrastive in custom_contrastives:
+                        im_contrastive, seg[:,:,0] = augment_seg(im, seg[:,:,0],augmentation_name = custom_contrastive)
+                        X.append(get_image_array(im_contrastive, input_width, input_height, imgNorm = imgNorm, ordering=IMAGE_ORDERING))
+                        Y.append(get_segmentation_array(seg, n_classes, output_width, output_height))
+            else:
+
+                assert ignore_segs == False , "Not supported yet"
+
+                im, seg, others = next(zipped)
+
+                im = cv2.imread(im, read_image_type)
+                seg = cv2.imread(seg, 1)
+
+                oth = []
+                for f in others:
+                    oth.append(cv2.imread(f, read_image_type))
+
+                if do_augment:
+                    if custom_augmentation is None:
+                        ims, seg[:, :, 0] = augment_seg(im, seg[:, :, 0],
+                                                        augmentation_name, other_imgs=oth)
+                    else:
+                        ims, seg[:, :, 0] = custom_augment_seg(im, seg[:, :, 0],
+                                                               custom_augmentation, other_imgs=oth)
+                else:
+                    ims = [im]
+                    ims.extend(oth)
+
+                oth = []
+                for i, image in enumerate(ims):
+                    oth_im = get_image_array(image, input_width,
+                                             input_height, imgNorm = imgNorm, ordering=IMAGE_ORDERING)
+
+                    if preprocessing is not None:
+                        if isinstance(preprocessing, Sequence):
+                            oth_im = preprocessing[i](oth_im)
+                        else:
+                            oth_im = preprocessing(oth_im)
+
+                    oth.append(oth_im)
+
+                X.append(oth)
+
+                if not ignore_segs:
+                    Y.append(get_segmentation_array(
+                        seg, n_classes, output_width, output_height))
+
+        if ignore_segs:
+            yield np.array(X)
+        else:
+            # check if contrastive images were sequenced properly
+            if do_contrastive:
+                for i in range(0, batch_size*(n_contrastive+1),n_contrastive+1):
+                    for j in range(i+1, n_contrastive+1):
+                        assert (Y[i] == Y[i+j]).all(), f"Some problem with contrast augumentation segmen instance {i} and {i+j}"
+            # with file_writer_contrastive.as_default():
+            #     tf.summary.image("Contrastive batch", np.array(X), step=iter_num, max_outputs=batch_size*(n_contrastive+1))
+            yield np.array(X), np.array(Y)

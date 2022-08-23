@@ -2,6 +2,7 @@ import json
 import os
 import glob
 import sys
+import mlflow
 import numpy as np
 
 import six
@@ -11,8 +12,16 @@ import tensorflow as tf
 import tensorflow.keras as keras
 # import keras_tuner as kt
 
-from .data_utils.data_loader import image_segmentation_generator, \
+from .data_utils.data_loader import autoencoder_data_generator, image_segmentation_generator, \
     verify_segmentation_dataset
+
+class CustomMSE(tf.keras.losses.Loss):
+    def __init__(self):
+        super().__init__()
+
+    def call(self, y_true, y_pred):
+        mse = tf.reduce_mean(tf.square(y_true - y_pred))
+        return mse
 
 def find_latest_checkpoint(checkpoints_path, fail_safe=True):
 
@@ -288,7 +297,7 @@ def train(model,
           callbacks=None,
           custom_augmentation=None,
           do_contrastive=False,
-          custom_contrastives=None,
+          custom_contrastives=[],
           contrastive_loss_weight=0.3,
           imgNorm = "sub_mean",
           other_inputs_paths=None,
@@ -296,10 +305,12 @@ def train(model,
           class_weights=None,
           do_shape=False,
           shape_loss_weight=0.3,
-          read_image_type=1  # cv2.IMREAD_COLOR = 1 (rgb),
+          read_image_type=1, # cv2.IMREAD_COLOR = 1 (rgb),
                              # cv2.IMREAD_GRAYSCALE = 0,
                              # cv2.IMREAD_UNCHANGED = -1 (4 channels like RGBA)
-          ):
+          mlflow_tracking_uri=None,
+          experiment_name=None,
+          do_autoencoder_pretraining=False):
     from .models.all_models import model_from_name
     # check if user gives model name instead of the model object
     if isinstance(model, six.string_types):
@@ -339,6 +350,9 @@ def train(model,
                             optimizer=optimizer_name,
                             metrics=['acc','categorical_crossentropy', 
                             custom_contrastive_loss(batch_size, n_contrastive)])
+        elif do_autoencoder_pretraining:
+            model.compile(loss='mean_squared_error',
+                            optimizer=optimizer_name)
         else:
             model.compile(loss='categorical_crossentropy', 
                             optimizer=optimizer_name, 
@@ -388,25 +402,46 @@ def train(model,
                                                    n_classes)
             assert verified
 
-    train_gen = image_segmentation_generator(
-        train_images, train_annotations,  batch_size,  n_classes,
-        input_height, input_width, output_height, output_width,
-        do_augment=do_augment, augmentation_name=augmentation_name,
-        custom_augmentation=custom_augmentation,
-        do_contrastive=do_contrastive,
-        custom_contrastives=custom_contrastives,
-        imgNorm = imgNorm,
-        other_inputs_paths=other_inputs_paths,
-        preprocessing=preprocessing, read_image_type=read_image_type)
-
-    if validate:
-        val_gen = image_segmentation_generator(
-            val_images, val_annotations,  val_batch_size,
-            n_classes, input_height, input_width, output_height, output_width,
+    if (do_autoencoder_pretraining == True):
+        train_gen = autoencoder_data_generator(
+            train_images, train_annotations,  batch_size,  n_classes,
+            input_height, input_width, output_height, output_width,
+            do_augment=do_augment, augmentation_name=augmentation_name,
+            custom_augmentation=custom_augmentation,
+            do_contrastive=do_contrastive,
+            custom_contrastives=custom_contrastives,
             imgNorm = imgNorm,
             other_inputs_paths=other_inputs_paths,
             preprocessing=preprocessing, read_image_type=read_image_type)
 
+        if validate:
+            val_gen = autoencoder_data_generator(
+                val_images, val_annotations,  val_batch_size,
+                n_classes, input_height, input_width, output_height, output_width,
+                imgNorm = imgNorm,
+                other_inputs_paths=other_inputs_paths,
+                preprocessing=preprocessing, read_image_type=read_image_type)
+    else:
+        train_gen = image_segmentation_generator(
+            train_images, train_annotations,  batch_size,  n_classes,
+            input_height, input_width, output_height, output_width,
+            do_augment=do_augment, augmentation_name=augmentation_name,
+            custom_augmentation=custom_augmentation,
+            do_contrastive=do_contrastive,
+            custom_contrastives=custom_contrastives,
+            imgNorm = imgNorm,
+            other_inputs_paths=other_inputs_paths,
+            preprocessing=preprocessing, read_image_type=read_image_type)
+
+        if validate:
+            val_gen = image_segmentation_generator(
+                val_images, val_annotations,  val_batch_size,
+                n_classes, input_height, input_width, output_height, output_width,
+                imgNorm = imgNorm,
+                other_inputs_paths=other_inputs_paths,
+                preprocessing=preprocessing, read_image_type=read_image_type)
+
+    save_min_val_loss_model_callback = None
     if callbacks is None and (not checkpoints_path is None):
         # default_callback = ModelCheckpoint(
         #     filepath=checkpoints_path + ".{epoch:05d}",
@@ -416,30 +451,53 @@ def train(model,
         #     mode='max',
         #     save_best_only=True
         # )
-        save_min_val_loss_model_callback = ModelCheckpoint(
-            filepath=checkpoints_path + ".{epoch:05d}-{val_loss:.2f}-{val_acc:.2f}",
-            save_weights_only=True,
-            verbose=True,
-            monitor='val_loss',
-            mode='min',
-            save_best_only=True
-        )
+        if (do_autoencoder_pretraining == True):
+            save_min_val_loss_model_callback = ModelCheckpoint(
+                filepath=checkpoints_path + "-{val_loss:.5f}.{epoch:05d}",
+                save_weights_only=True,
+                verbose=True,
+                monitor='val_loss',
+                mode='min',
+                save_best_only=True
+            )
+        else:
+            save_min_val_loss_model_callback = ModelCheckpoint(
+                filepath=checkpoints_path + "-{val_loss:.5f}-{val_acc:.5f}.{epoch:05d}",
+                save_weights_only=True,
+                verbose=True,
+                monitor='val_loss',
+                mode='min',
+                save_best_only=True
+            )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, min_lr=0.00001, verbose=1, mode='min')
-    callbacks = [save_min_val_loss_model_callback, reduce_lr]
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, verbose=1, mode='min')
+    callbacks = [save_min_val_loss_model_callback]
 
-    if not validate:
-        history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
-                            epochs=epochs, callbacks=callbacks, initial_epoch=initial_epoch)
-    else:
-        history = model.fit(train_gen,
-                            steps_per_epoch=steps_per_epoch,
-                            validation_data=val_gen,
-                            validation_steps=val_steps_per_epoch,
-                            epochs=epochs, callbacks=callbacks,
-                            use_multiprocessing=gen_use_multiprocessing,
-                            initial_epoch=initial_epoch)
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
+    with mlflow.start_run():
+        mlflow.tensorflow.autolog()
+        mlflow.log_param("developer", "manav")
+        mlflow.log_param("developer-email", "manav.desai@lightmetrics.co")
+        mlflow.log_param("train-data", train_images)
+        mlflow.log_param("train-annotations", train_annotations)
+        mlflow.log_param("val-data", val_images)
+        mlflow.log_param("val-annotations", val_annotations)
+        mlflow.log_param("class-weights", class_weights)
+        
+        if not validate:
+            history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
+                                epochs=epochs, callbacks=callbacks, initial_epoch=initial_epoch)
+        else:
+            history = model.fit(train_gen,
+                                steps_per_epoch=steps_per_epoch,
+                                validation_data=val_gen,
+                                validation_steps=val_steps_per_epoch,
+                                epochs=epochs, callbacks=callbacks,
+                                use_multiprocessing=gen_use_multiprocessing,
+                                initial_epoch=initial_epoch)
     return history
 
 

@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow.python.ops import gen_image_ops
 
 from .config import IMAGE_ORDERING
-from .model_utils import get_segmentation_model
+from .model_utils import get_segmentation_model, get_autoencoder_model
 from .vgg16 import get_vgg_encoder
 from .mobilenet import get_mobilenet_encoder
 from .basic_models import vanilla_encoder
@@ -56,6 +56,52 @@ def segnet_decoder(f, n_classes, n_up=3):
 
     return o
 
+def autoencoder_decoder(f, n_classes, n_up=3):
+    
+    assert n_up >= 2
+    
+    # custom = False
+    custom = True
+    if custom:
+        upsample_func = UpSampling2DBilinear
+    else:
+        upsample_func = UpSampling2D
+
+    o = f
+    o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
+    o = (Conv2D(512, (3, 3), padding='valid', data_format=IMAGE_ORDERING))(o)
+    o = (BatchNormalization())(o)
+
+    o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
+    # o = (Conv2DTranspose(256, (2, 2), (2, 2), "valid", data_format=IMAGE_ORDERING))
+    o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
+    o = (Conv2D(256, (3, 3), padding='valid', data_format=IMAGE_ORDERING))(o)
+    o = (BatchNormalization())(o)
+
+    for _ in range(n_up-2):
+        o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
+        # o = (Conv2DTranspose(256, (2, 2), (2, 2), "valid", data_format=IMAGE_ORDERING))
+        o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
+        o = (Conv2D(256, (3, 3), padding='valid',
+             data_format=IMAGE_ORDERING))(o)
+        o = (BatchNormalization())(o)
+
+    o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
+    # o = (Conv2DTranspose(128, (2, 2), (2, 2), "valid", data_format=IMAGE_ORDERING))
+    o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
+    o = (Conv2D(128, (3, 3), padding='valid', data_format=IMAGE_ORDERING))(o)
+    o = (BatchNormalization())(o)
+
+    o = (upsample_func((2, 2), data_format=IMAGE_ORDERING))(o)
+    # o = (Conv2DTranspose(64, (2, 2), (2, 2), "valid", data_format=IMAGE_ORDERING))
+    o = (ZeroPadding2D((1, 1), data_format=IMAGE_ORDERING))(o)
+    o = (Conv2D(64, (3, 3), padding='valid', data_format=IMAGE_ORDERING, name="seg_feats"))(o)
+    o = (BatchNormalization())(o)
+
+    o = Conv2D(n_classes, (3, 3), padding='same',
+               data_format=IMAGE_ORDERING)(o)
+
+    return o
 
 def _segnet(n_classes, encoder,  input_height=416, input_width=608,
             encoder_level=3, channels=3):
@@ -69,6 +115,17 @@ def _segnet(n_classes, encoder,  input_height=416, input_width=608,
 
     return model
 
+def _autoencoder(n_classes, encoder,  input_height=416, input_width=608,
+            encoder_level=3, channels=3):
+
+    img_input, levels = encoder(
+        input_height=input_height,  input_width=input_width, channels=channels)
+
+    feat = levels[encoder_level]
+    o = autoencoder_decoder(feat, n_classes, n_up=3)
+    model = get_autoencoder_model(img_input, o)
+
+    return model
 
 def segnet(n_classes, input_height=416, input_width=608, encoder_level=3, channels=3):
 
@@ -77,6 +134,12 @@ def segnet(n_classes, input_height=416, input_width=608, encoder_level=3, channe
     model.model_name = "segnet"
     return model
 
+def autoencoder(n_classes, input_height=416, input_width=608, encoder_level=3, channels=3):
+
+    model = _autoencoder(n_classes, vanilla_encoder,  input_height=input_height,
+                    input_width=input_width, encoder_level=encoder_level, channels=channels)
+    model.model_name = "autoencoder"
+    return model
 
 def vgg_segnet(n_classes, input_height=416, input_width=608, encoder_level=3, channels=3):
 

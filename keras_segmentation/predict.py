@@ -191,9 +191,6 @@ def predict(model=None, inp=None, out_fname=None,
                         ordering=IMAGE_ORDERING)
     pr = model.predict(np.array([x]))[0]
     pr_reshaped = pr.reshape((output_height, output_width, n_classes))
-    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_0.csv", pr_reshaped[:, :, 0], delimiter=",")
-    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_1.csv", pr_reshaped[:, :, 1], delimiter=",")
-    # np.savetxt("/home/anant/Desktop/manav/rough/pr_reshaped_2.csv", pr_reshaped[:, :, 2], delimiter=",")
 
     if (use_bg_prob_threshold == True):
         pr_0 = pr_reshaped[:, :, 0]
@@ -224,6 +221,24 @@ def predict(model=None, inp=None, out_fname=None,
 
     return pr
 
+def autoencoder_predict(model=None, input_file_path=None, output_file_path=None, read_image_type=1, imgNorm="sub_mean"):
+    image = cv2.imread(input_file_path, read_image_type)
+
+    output_width = model.output_width
+    output_height = model.output_height
+    input_width = model.input_width
+    input_height = model.input_height
+    n_classes = model.n_classes
+
+    input_image = get_image_array(image, input_width, input_height, imgNorm=imgNorm, ordering=IMAGE_ORDERING)
+
+    prediction = model.predict(np.array([input_image]))[0]
+
+    output_image = prediction.reshape((output_height, output_width, n_classes))
+
+    cv2.imwrite(output_file_path, cv2.hconcat([input_image, output_image]))
+
+    return prediction
 
 def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
                      checkpoints_path=None, overlay_img=False,
@@ -286,6 +301,19 @@ def predict_multiple(model=None, inps=None, inp_dir=None, out_dir=None,
 
     return all_prs
 
+def autoencoder_predict_multiple(model=None, inp_dir=None, out_dir=None, read_image_type=1, imgNorm="sub_mean"):
+    all_prs = []
+
+    for input_file in tqdm(os.listdir(inp_dir)):
+        input_file_path = os.path.join(inp_dir, input_file)
+
+        output_file_path = os.path.join(out_dir, input_file)
+
+        pr = autoencoder_predict(model, input_file_path, output_file_path, read_image_type, imgNorm)
+
+        all_prs.append(pr)
+    
+    return all_prs
 
 def set_video(inp, video_name):
     cap = cv2.VideoCapture(inp)
