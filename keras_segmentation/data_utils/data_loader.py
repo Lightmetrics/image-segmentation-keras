@@ -159,7 +159,7 @@ def get_image_array(image_input,
         img = img.astype(np.float32)
         img = np.atleast_3d(img)
 
-        means = [103.939, 116.779, 123.68]
+        means = [109.705, 109.705, 109.705]
 
         for i in range(min(img.shape[2], len(means))):
             img[:, :, i] -= means[i]
@@ -414,9 +414,11 @@ def autoencoder_data_generator(images_path, segs_path, batch_size,
                     seg = None
                 else:
                     im, seg = next(zipped)
-                    seg = cv2.imread(seg, 1)
+                    seg = cv2.imread(seg, read_image_type)
+                    # seg = seg.reshape((seg.shape[0], seg.shape[1], n_classes))
 
                 im = cv2.imread(im, read_image_type)
+                # im = im.reshape((seg.shape[0], seg.shape[1], n_classes))
                 
 
                 if do_augment:

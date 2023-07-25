@@ -236,6 +236,12 @@ def autoencoder_predict(model=None, input_file_path=None, output_file_path=None,
 
     output_image = prediction.reshape((output_height, output_width, n_classes))
 
+    input_image = (input_image * 255).astype('int')
+    output_image = (output_image * 255).astype('int')
+
+    # input_image = input_image[:, :, ::-1]
+    # output_image = output_image[:, :, ::-1]
+
     cv2.imwrite(output_file_path, cv2.hconcat([input_image, output_image]))
 
     return prediction

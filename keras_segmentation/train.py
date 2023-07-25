@@ -471,8 +471,8 @@ def train(model,
             )
         if sys.version_info[0] < 3:
             default_callback = CheckpointsCallback(checkpoints_path)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, verbose=1, mode='min')
-    callbacks = [save_min_val_loss_model_callback]
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=10, verbose=1, mode='min', min_lr=1e-7)
+    callbacks = [save_min_val_loss_model_callback, reduce_lr]
 
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     mlflow.set_experiment(experiment_name)
@@ -486,6 +486,8 @@ def train(model,
         mlflow.log_param("val-data", val_images)
         mlflow.log_param("val-annotations", val_annotations)
         mlflow.log_param("class-weights", class_weights)
+        mlflow.log_param("checkpoints-path", checkpoints_path)
+        mlflow.log_param("model-name", model.model_name)
         
         if not validate:
             history = model.fit(train_gen, steps_per_epoch=steps_per_epoch,
